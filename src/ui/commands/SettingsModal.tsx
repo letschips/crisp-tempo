@@ -176,7 +176,7 @@ export function SettingsModal({
         </div>
 
         {/* Settings Body */}
-        <div className="tempo-window-body" style={{ maxHeight: "70vh", overflowY: "auto" }}>
+        <div className="tempo-window-body">
           {/* Section 1: General Preferences */}
           <div className="tempo-settings-section">
             <div className="tempo-settings-section-title">{t("generalSettings", locale)}</div>

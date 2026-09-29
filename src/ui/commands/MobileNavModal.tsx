@@ -109,7 +109,7 @@ export function MobileNavModal({
         {/* Body */}
         <div
           className="tempo-window-body"
-          style={{ maxHeight: "calc(80vh - 100px)", overflowY: "auto", padding: "14px 16px" }}
+          style={{ padding: "14px 16px" }}
         >
           {/* Quick System Navigation Pills */}
           <div style={{ marginBottom: 16 }}>

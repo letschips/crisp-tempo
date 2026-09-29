@@ -742,10 +742,19 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   flex-shrink: 1 !important;
 }
 
+/* The ellipsis must be on the text itself: on the flex container it never applies, so a long
+   project name in a narrow pane was cut mid-letter and pushed past the tag's border. */
+.tempo-project-tag > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tempo-project-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .tempo-date-tag {
@@ -1276,13 +1285,13 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
 }
 
 /* Modals & Standalone Window Cards */
+/* Obsidian gives every .workspace-leaf `contain: strict`, which makes the leaf (not the
+   window) the containing block of fixed descendants. Sizing the backdrop with 100vw from the
+   leaf's corner overflowed the leaf whenever a sidebar was open: the modal went off centre
+   and its right side was clipped. inset: 0 fills exactly the leaf it lives in. */
 .tempo-modal-backdrop {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
+  inset: 0;
   background: rgba(15, 23, 42, 0.45);
   display: flex;
   align-items: center;
@@ -1303,9 +1312,8 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
 
 .tempo-window-card {
   width: 540px;
-  max-width: 92vw;
-  max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px);
+  max-width: 100%;
+  max-height: 100%;
   margin: auto;
   background: #ffffff !important;
   border: 1px solid rgba(0, 0, 0, 0.12) !important;
@@ -1987,9 +1995,8 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
 /* Mobile Projects Navigation Modal */
 .tempo-mobile-nav-modal {
   width: 520px;
-  max-width: 94vw;
-  max-height: calc(100vh - 48px);
-  max-height: calc(100dvh - 48px);
+  max-width: 100%;
+  max-height: 100%;
   margin: auto;
 }
 

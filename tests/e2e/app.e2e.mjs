@@ -998,6 +998,75 @@ await scenario('r6_logbook_lists_canceled', async () => {
   return { titles };
 });
 
+// =====================================================================================
+// Round 7 — modals inside an Obsidian leaf with sidebars open
+// =====================================================================================
+
+await scenario('r7_modal_centres_inside_a_contained_leaf', async () => {
+  // Obsidian gives every .workspace-leaf `contain: strict`, which makes the leaf the
+  // containing block of fixed descendants. With sidebars open the leaf is offset and narrow.
+  const p = await boot({ width: 1512, height: 886 });
+  await p.evaluate(() => {
+    const leaf = document.createElement('div');
+    leaf.className = 'workspace-leaf';
+    leaf.style.cssText = 'position:absolute;left:345px;top:45px;width:781px;height:841px;contain:strict;';
+    const app = document.getElementById('app');
+    app.style.cssText = 'width:100%;height:100%;position:relative';
+    app.parentNode.insertBefore(leaf, app);
+    leaf.appendChild(app);
+  });
+  // Wait out the entrance animation (a short translate) before measuring.
+  const measure = async () => { await p.waitForTimeout(300); return p.evaluate(() => {
+    const leaf = document.querySelector('.workspace-leaf').getBoundingClientRect();
+    const c = document.querySelector('.tempo-window-card').getBoundingClientRect();
+    return {
+      inside: c.left >= leaf.left - 0.5 && c.right <= leaf.right + 0.5 && c.top >= leaf.top - 0.5 && c.bottom <= leaf.bottom + 0.5,
+      dx: Math.round((c.left + c.right - leaf.left - leaf.right) / 2),
+      dy: Math.round((c.top + c.bottom - leaf.top - leaf.bottom) / 2),
+    };
+  }); };
+  const out = {};
+  await p.locator('.tempo-projects-entry').click();
+  out.projects = await measure();
+  await p.keyboard.press('Escape');
+  await p.locator('.tempo-header-actions .tempo-action-btn').first().click();
+  out.settings = await measure();
+  await p.keyboard.press('Escape');
+  await p.locator('.tempo-header-actions .tempo-btn-primary').click();
+  out.newTask = await measure();
+  for (const [name, m] of Object.entries(out)) {
+    assert.ok(m.inside, `${name} modal must stay inside the leaf: ${JSON.stringify(m)}`);
+    assert.ok(Math.abs(m.dx) <= 1 && Math.abs(m.dy) <= 1, `${name} modal must be centred: ${JSON.stringify(m)}`);
+  }
+  await close(p);
+  return out;
+});
+
+await scenario('r7_settings_scrolls_in_a_short_leaf', async () => {
+  const p = await boot({ width: 1280, height: 900 });
+  await p.evaluate(() => {
+    const leaf = document.createElement('div');
+    leaf.className = 'workspace-leaf';
+    leaf.style.cssText = 'position:absolute;left:300px;top:40px;width:780px;height:400px;contain:strict;';
+    const app = document.getElementById('app');
+    app.style.cssText = 'width:100%;height:100%;position:relative';
+    app.parentNode.insertBefore(leaf, app);
+    leaf.appendChild(app);
+  });
+  await p.locator('.tempo-header-actions .tempo-action-btn').first().click();
+  const r = await p.evaluate(() => {
+    const leaf = document.querySelector('.workspace-leaf').getBoundingClientRect();
+    const card = document.querySelector('.tempo-window-card');
+    const body = card.querySelector('.tempo-window-body');
+    const footer = card.querySelector('.tempo-window-footer').getBoundingClientRect();
+    return { scrollable: body.scrollHeight > body.clientHeight, footerVisible: footer.top >= leaf.top && footer.bottom <= leaf.bottom + 0.5 };
+  });
+  assert.ok(r.scrollable, 'the settings body scrolls instead of overflowing the leaf');
+  assert.ok(r.footerVisible, 'the Done button stays reachable');
+  await close(p);
+  return r;
+});
+
 await scenario('no_uncaught_page_errors', async () => {
   assert.deepEqual(pageErrors, [], 'the UI must not throw during any scenario');
   return { pageErrors: pageErrors.length };

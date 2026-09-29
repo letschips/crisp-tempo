@@ -23,6 +23,8 @@ export interface LicenseRequestInput {
   method: string;
   headers: Record<string, string>;
   body: string;
+  /** Obsidian's requestUrl throws on 4xx by default; a denial must arrive as a response. */
+  throw: false;
 }
 
 export interface LicenseCheckEnvironment {
@@ -31,9 +33,27 @@ export interface LicenseCheckEnvironment {
   now?(): number;
   getDeviceId?(): string;
   online?: boolean;
+  /** Upper bound for the online check before falling back to the local signature. */
+  timeoutMs?: number;
+}
+
+interface CloudVerdict {
+  valid?: boolean;
+  reason?: string;
+  message?: string;
 }
 
 const WORKER_VERIFY_URL = "https://license.letschips.xyz/api/verify-device";
+const ONLINE_CHECK_TIMEOUT_MS = 2500;
+
+/** Rejects after `ms` so a hung request cannot keep the activation button spinning. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("Crisp license check timeout")), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 // Crisp 系列全家桶通用 Ed25519 嵌入公钥（仅公开验证材料，无任何私钥）
 export const CRISP_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
@@ -227,33 +247,46 @@ export async function verifyLicenseCode(
       return { valid: true, payload, source: "local", message: "本地签名校验通过" };
     }
 
-    // 在线验证设备数
+    // 在线核验吊销与设备数。只有服务端才知道这两件事，所以它明确给出的拒绝必须生效：
+    // 200/400/401/403 且 valid:false 判为拒绝（与其他 Crisp 插件一致）。
+    // 5xx、无法解析的响应、网络错误和超时仍降级为本地验签，服务不可用时不影响使用。
     if (request) {
       try {
-        const res = await request({
-          url: WORKER_VERIFY_URL,
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            licenseCode: trimmed,
-            deviceId: getDeviceId(),
-            action: "activate",
-            pluginId: targetPluginId,
+        const res = await withTimeout(
+          request({
+            url: WORKER_VERIFY_URL,
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              licenseCode: trimmed,
+              deviceId: getDeviceId(),
+              action: "activate",
+              pluginId: targetPluginId,
+            }),
+            throw: false,
           }),
-        });
+          environment?.timeoutMs ?? ONLINE_CHECK_TIMEOUT_MS,
+        );
 
-        if (res.status === 200 && res.json) {
-          const cloudResult = res.json as {
-            valid?: boolean;
-            reason?: string;
-            message?: string;
+        let cloudResult: CloudVerdict | null = null;
+        try {
+          // requestUrl's json getter throws when the body is not JSON.
+          const body = res.json;
+          cloudResult = body && typeof body === "object" ? (body as CloudVerdict) : null;
+        } catch {
+          cloudResult = null;
+        }
+
+        const isAuthDenial =
+          [200, 400, 401, 403].includes(res.status) && cloudResult?.valid === false;
+        if (isAuthDenial) {
+          return {
+            valid: false,
+            reason: cloudResult?.reason || "授权已被服务端拒绝或设备数已达上限",
           };
-          if (cloudResult.valid === false) {
-            return {
-              valid: false,
-              reason: cloudResult.reason || "设备数已达上限",
-            };
-          }
+        }
+
+        if (res.status === 200 && cloudResult?.valid === true) {
           return {
             valid: true,
             payload,

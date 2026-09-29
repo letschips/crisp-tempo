@@ -13,3 +13,6 @@ backups/
 tempo-*.png
 *.preview.png
 scripts/take-screenshots.mjs
+
+# Machine-specific deploy target (see scripts/deploy.mjs)
+.deploy-target

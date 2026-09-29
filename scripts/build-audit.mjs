@@ -2,17 +2,16 @@
 // so the Playwright evidence scripts can drive the real UI against a mock plugin.
 //
 // Usage: node scripts/build-audit.mjs [output-directory]
-// Default output directory keeps the historical path used by the audit scripts.
+// Default output directory is a temporary folder.
 import esbuild from "esbuild";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const outDir = path.resolve(
-  process.argv[2] || "/Users/xiaohetongxue/Documents/Codex/2026-09-28/crisp-tempo-audit",
-);
+const outDir = path.resolve(process.argv[2] || path.join(os.tmpdir(), "crisp-tempo-audit"));
 fs.mkdirSync(outDir, { recursive: true });
 
 // The harness runs in a plain browser page, so the runtime pieces of the `obsidian` module

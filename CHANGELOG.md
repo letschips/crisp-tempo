@@ -2,6 +2,17 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.1.2] - 2026-09-29
+
+### Fixed
+- 授权服务端明确拒绝（已吊销、激活次数达上限、未包含本插件权限）时授权失效。此前这类响应被当成网络异常而放行。服务不可用、网络错误时仍降级为本地验签。
+- 联网校验加 2.5 秒超时，网络卡住时「激活」按钮不再一直转圈。
+- README 删去未实现的「领域分组」「标签」描述，补充「等待依赖」视图。
+
+### Changed
+- 仓库新增自动化测试：`npm test`（授权校验）与 `npm run test:e2e`（界面端到端），`npm run check` 包含两者。
+- 部署与测试脚本不再写死本机路径；部署目标通过 `OBSIDIAN_VAULT`、命令参数或本地 `.deploy-target` 指定。
+
 ## [0.1.1] - 2026-09-29
 
 ### Added

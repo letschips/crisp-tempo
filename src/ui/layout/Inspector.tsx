@@ -21,6 +21,14 @@ interface InspectorProps {
   /** Creating subtasks needs a license; editing existing ones does not. */
   canAddSubtask?: boolean;
   onRequestLicense?: () => void;
+  /** Opens the note a task came from (set by tasks created from another plugin, e.g. Pulse memos). */
+  onOpenSource?: (notePath: string) => void;
+}
+
+/** "Pulse 速记 · 2026-10-09 速记" for Pulse memos, otherwise the note's name. */
+function sourceLabel(task: Task, locale: Locale): string {
+  const name = (task.notePath ?? "").split("/").pop()?.replace(/\.md$/i, "") ?? "";
+  return task.sourceId?.startsWith("crisp-pulse:") ? `${t("sourcePulseMemo", locale)} · ${name}` : name;
 }
 
 export function Inspector({
@@ -37,6 +45,7 @@ export function Inspector({
   onDeleteSubtask,
   canAddSubtask = true,
   onRequestLicense,
+  onOpenSource,
 }: InspectorProps): JSX.Element {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [titleDraft, setTitleDraft] = useState(task.title);
@@ -239,6 +248,21 @@ export function Inspector({
             placement="auto"
             onChange={(d) => onUpdateTask({ dueDate: d })}
           />
+
+          {/* Source note, for tasks created from another plugin's item */}
+          {task.notePath && (
+            <>
+              <span className="tempo-property-label">{t("source", locale)}</span>
+              <button
+                type="button"
+                className="tempo-property-source"
+                title={task.notePath}
+                onClick={() => onOpenSource?.(task.notePath!)}
+              >
+                {sourceLabel(task, locale)}
+              </button>
+            </>
+          )}
         </div>
 
         {/* Description Section. Committed on blur: persisting per keystroke would push one

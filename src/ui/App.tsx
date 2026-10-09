@@ -72,6 +72,11 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
     };
   }, [store]);
 
+  // Another plugin (Crisp Pulse) asked to show one of its tasks.
+  useEffect(() => store.onRevealTask((taskId) => {
+    if (store.data?.database.tasks[taskId]) setSelectedTaskId(taskId);
+  }), [store]);
+
   // Listen for Quick Add command
   useEffect(() => {
     const unsubQuickAdd = store.onQuickAdd(() => {
@@ -963,6 +968,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               onDeleteSubtask={handleDeleteTask}
               canAddSubtask={storeState.data.licenseStatus === "valid"}
               onRequestLicense={promptForLicense}
+              onOpenSource={(notePath) => void plugin.app.workspace.openLinkText(notePath, "", false)}
             />
           )}
         </div>

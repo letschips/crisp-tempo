@@ -725,6 +725,31 @@ await scenario('r5_save_strip_does_not_shift_layout', async () => {
   return { kpiTop: before, stable: true };
 });
 
+await scenario('pulse_task_reveal_and_source_link', async () => {
+  const p = await boot();
+  await p.evaluate(() => {
+    plugin.app.workspace.openLinkText = (path) => { window.__openedSource = path; };
+    const s = tempoAudit.store.TempoStore.get(plugin);
+    s.updateDatabase((db) => ({ ...db, tasks: { ...db.tasks, 'task-pulse': {
+      id: 'task-pulse', title: 'From a memo', status: 'todo', triage: 'inbox', availability: 'anytime', priority: 'none',
+      notePath: 'Topics/x/raw/inbox/scratch/2026-10-09 速记.md', sourceId: 'crisp-pulse:abc-123',
+      createdAt: Date.now(), updatedAt: Date.now(), order: 'z1',
+    } } }), false);
+    s.revealTask('task-pulse');
+  });
+  await p.locator('.tempo-inspector-card').waitFor();
+  assert.equal(await p.locator('.tempo-inspector-title-input').inputValue(), 'From a memo', 'the requested task is selected');
+  const source = p.locator('.tempo-property-source');
+  assert.equal((await source.textContent()).trim(), 'Pulse 速记 · 2026-10-09 速记');
+  await source.click();
+  assert.equal(await p.evaluate(() => window.__openedSource), 'Topics/x/raw/inbox/scratch/2026-10-09 速记.md');
+  await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).revealTask('task-1'));
+  await p.waitForFunction(() => document.querySelector('.tempo-inspector-title-input')?.value === 'Primary Task');
+  assert.equal(await p.locator('.tempo-property-source').count(), 0, 'ordinary tasks show no source row');
+  await close(p);
+  return { revealed: true, sourceOpened: true };
+});
+
 await scenario('r5_slow_save_still_reports_progress', async () => {
   const p = await boot({ adapter: true, adapterRaw: 'fixture' });
   await p.evaluate(() => {

@@ -854,6 +854,29 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   font-weight: 500;
 }
 
+/* Themes style every <button>; like .tempo-property-select, the link look needs !important to win. */
+.tempo-inspector-card .tempo-property-source {
+  all: unset;
+  box-sizing: border-box;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--text-accent) !important;
+  font-family: inherit !important;
+  font-size: 12px;
+  padding: 5px 0 !important;
+  height: auto !important;
+  cursor: pointer;
+}
+
+.tempo-inspector-card .tempo-property-source:hover {
+  text-decoration: underline;
+}
+
 .tempo-property-select {
   all: unset;
   box-sizing: border-box;

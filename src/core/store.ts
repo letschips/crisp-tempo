@@ -103,7 +103,8 @@ function taskProblem(value: unknown, id: string): string | null {
     optionalStringProblem(value.projectId, "projectId") ??
     optionalStringProblem(value.parentTaskId, "parentTaskId") ??
     optionalStringProblem(value.cycleId, "cycleId") ??
-    optionalStringProblem(value.notePath, "notePath")
+    optionalStringProblem(value.notePath, "notePath") ??
+    optionalStringProblem(value.sourceId, "sourceId")
   );
 }
 
@@ -253,6 +254,8 @@ export class TempoStore {
   private quickAddListeners = new Set<{ listener: () => void; leaf?: WorkspaceLeaf }>();
   private pendingQuickAddIntent = false;
   private pendingQuickAddLeaf: WorkspaceLeaf | null = null;
+  private revealListeners = new Set<(taskId: string) => void>();
+  private pendingRevealTaskId: string | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingSaveData: TempoPluginData | null = null;
   private flushPromise: Promise<void> | null = null;
@@ -312,6 +315,34 @@ export class TempoStore {
       }, 50);
     }
     return () => this.quickAddListeners.delete(entry);
+  }
+
+  /** Asks an open Tempo view to select a task; kept until a view subscribes when none is open yet. */
+  public revealTask(taskId: string): void {
+    if (this.revealListeners.size === 0) {
+      this.pendingRevealTaskId = taskId;
+      return;
+    }
+    for (const listener of this.revealListeners) {
+      try {
+        listener(taskId);
+      } catch (err) {
+        console.error("Error in revealTask listener:", err);
+      }
+    }
+  }
+
+  public onRevealTask(listener: (taskId: string) => void): () => void {
+    this.revealListeners.add(listener);
+    const pending = this.pendingRevealTaskId;
+    if (pending) {
+      this.pendingRevealTaskId = null;
+      setTimeout(() => {
+        if (this.revealListeners.has(listener)) listener(pending);
+        else this.pendingRevealTaskId = pending;
+      }, 50);
+    }
+    return () => this.revealListeners.delete(listener);
   }
 
   public notify(): void {
@@ -813,6 +844,11 @@ export class TempoStore {
     this.notify();
     this.saveDebounced(50);
     await this.flush();
+  }
+
+  /** True while edits are only in memory; flush() reports failures through saveStatus, not by throwing. */
+  public get hasPendingSave(): boolean {
+    return this.pendingSaveData !== null;
   }
 
   public saveDebounced(delay = 300): void {

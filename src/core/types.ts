@@ -23,6 +23,8 @@ export interface Task {
   labels?: string[];
   estimate?: number;
   notePath?: string;
+  /** Stable origin of a task created by another plugin, e.g. "crisp-pulse:<memo id>". One task per source. */
+  sourceId?: string;
   createdAt: number;
   updatedAt: number;
   completedAt?: number;

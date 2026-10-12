@@ -903,6 +903,13 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   outline-offset: 1px;
 }
 
+/* Windows/Linux draw the option popup from CSS; without an opaque option
+   background it falls back to the translucent select fill over white. */
+.tempo-property-select option {
+  background-color: var(--background-primary);
+  color: var(--text-normal);
+}
+
 /* Custom Glass DatePicker Popover */
 .tempo-datepicker-wrapper {
   position: relative;

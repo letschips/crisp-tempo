@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.2.1] - 2026-10-12
+
+### Fixed
+- Windows 夜间模式下，新建任务和任务详情里的下拉列表（项目、优先级等）展开后是亮色。现在跟随 Obsidian 主题。
+
 ## [0.2.0] - 2026-10-09
 
 ### Added

@@ -3,7 +3,7 @@ import { createEmptyDatabase } from "./mock-data";
 import type { Locale } from "../services/i18n";
 import type { Area, Cycle, Label, Project, Task, TodoDatabase } from "./types";
 import type { LicensePayload, LicenseVerifyResult } from "../services/license";
-import { discoverVaultCrispLicense, verifyLicenseCode } from "../services/license";
+import { inheritVaultCrispLicense, verifyLicenseCode } from "../services/license";
 
 export interface TempoPluginData {
   schemaVersion: number;
@@ -471,30 +471,9 @@ export class TempoStore {
       database: validation.db,
     };
 
-    // Auto-discover sibling Crisp license from vault if unlicensed and not explicitly deactivated
-    if (!cleanData.licenseKey && cleanData.licenseStatus !== "unlicensed") {
-      try {
-        const vaultLicense = await discoverVaultCrispLicense(this.plugin?.app);
-        if (vaultLicense) {
-          const res = await verifyLicenseCode(vaultLicense, "crisp-tempo", {
-            online: false,
-          });
-          if (res.valid) {
-            cleanData.licenseKey = vaultLicense;
-            cleanData.licenseStatus = "valid";
-            cleanData.licensePayload = res.payload;
-            cleanData.licenseLastVerified = Date.now();
-            console.log("Crisp Tempo: 已继承库内可用的 Crisp 授权");
-          }
-        }
-      } catch (err) {
-        console.debug("Crisp Tempo: license auto-inheritance check failed", err);
-      }
-    }
-
     // The stored status is only a cache. Creation is gated on it, so it is re-derived from the
     // key's local Ed25519 signature on every load: a hand-edited "valid" without a genuine key
-    // must not unlock anything. The online device check below may still downgrade it.
+    // must not unlock anything. The online check after load may still downgrade it.
     if (cleanData.licenseKey) {
       try {
         const local = await verifyLicenseCode(cleanData.licenseKey, "crisp-tempo", { online: false });
@@ -509,23 +488,6 @@ export class TempoStore {
       cleanData.licensePayload = undefined;
     }
 
-    // If an existing license key is present, verify in the background asynchronously
-    if (cleanData.licenseKey) {
-      void verifyLicenseCode(cleanData.licenseKey, "crisp-tempo")
-        .then((res) => {
-          if (this.data && this.data.licenseKey === cleanData.licenseKey) {
-            this.data.licenseStatus = res.valid ? "valid" : "invalid";
-            if (res.payload) this.data.licensePayload = res.payload;
-            this.data.licenseLastVerified = Date.now();
-            this.notify();
-            this.saveDebounced(1000);
-          }
-        })
-        .catch((err) => {
-          console.debug("Crisp Tempo: background license verification failed", err);
-        });
-    }
-
     // One recoverable snapshot per day, taken before this session starts writing.
     await this.ensureDailyBackup();
 
@@ -536,7 +498,56 @@ export class TempoStore {
     this.data = cleanData;
     this.status = "ready";
     this.notify();
+    // Online check and inheritance run after load so opening Tempo never waits on the network.
+    void this.refreshLicenseInBackground(cleanData.licenseKey, cleanData.licenseStatus);
     return cleanData;
+  }
+
+  /**
+   * Checks the stored key online; when there is none, or it is expired, revoked or lacks
+   * permission, inherits a code from a sibling Crisp plugin that passes the online check.
+   * An explicit deactivation ("unlicensed") is respected. Results are dropped when the user
+   * activated or cleared a licence while the check was in flight.
+   */
+  private async refreshLicenseInBackground(
+    storedKey: string | undefined,
+    storedStatus: TempoPluginData["licenseStatus"],
+  ): Promise<void> {
+    const unchanged = () =>
+      !!this.data &&
+      this.data.licenseKey === storedKey &&
+      this.data.licenseStatus !== "unlicensed";
+    try {
+      if (storedKey) {
+        const res = await verifyLicenseCode(storedKey, "crisp-tempo");
+        if (!unchanged() || !this.data) return;
+        this.data.licenseStatus = res.valid ? "valid" : "invalid";
+        if (res.payload) this.data.licensePayload = res.payload;
+        this.data.licenseLastVerified = Date.now();
+        this.notify();
+        this.saveDebounced(1000);
+        if (res.valid) return;
+      } else if (storedStatus === "unlicensed") {
+        return;
+      }
+
+      const inherited = await inheritVaultCrispLicense(this.plugin?.app, "crisp-tempo", {
+        exclude: storedKey ? [storedKey] : [],
+      });
+      if (!inherited || !unchanged() || !this.data) return;
+      this.data = {
+        ...this.data,
+        licenseKey: inherited.code,
+        licenseStatus: "valid",
+        licensePayload: inherited.result.payload,
+        licenseLastVerified: Date.now(),
+      };
+      this.notify();
+      this.saveDebounced(50);
+      console.log("Crisp Tempo: 已继承库内可用的 Crisp 授权");
+    } catch (err) {
+      console.debug("Crisp Tempo: background license check failed", err);
+    }
   }
 
   private static describeTopLevelProblem(payload: unknown): string | null {

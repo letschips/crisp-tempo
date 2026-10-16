@@ -2,6 +2,13 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.2.2] - 2026-10-16
+
+### Fixed
+- 自动沿用其他 Crisp 插件的激活码时，先联网核对；已被停用或设备数已满的激活码不会再被沿用。
+- Tempo 自己的激活码到期或失效后，会自动改用库内其他 Crisp 插件里仍然有效的激活码。
+- 库内有多个激活码时，前一个不可用会继续尝试后面的，不再被挡住。
+
 ## [0.2.1] - 2026-10-12
 
 ### Fixed

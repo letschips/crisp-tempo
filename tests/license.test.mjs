@@ -38,7 +38,7 @@ await esbuild.build({
     },
   }],
 });
-const { verifyLicenseCode } = await import(pathToFileURL(path.join(outDir, "license.mjs")).href);
+const { verifyLicenseCode, discoverVaultCrispLicenses, inheritVaultCrispLicense } = await import(pathToFileURL(path.join(outDir, "license.mjs")).href);
 
 const b64url = (buf) => Buffer.from(buf).toString("base64url");
 function makeCode(fields = {}) {
@@ -142,5 +142,124 @@ test("local checks reject before any request", async () => {
   assert.equal((await verifyLicenseCode(expired, "crisp-tempo", env({ request }))).valid, false);
   const otherPlugin = makeCode({ features: ["crisp-mind"] });
   assert.equal((await verifyLicenseCode(otherPlugin, "crisp-tempo", env({ request }))).valid, false);
+  assert.equal(calls.length, 0);
+});
+
+// ---- Inheritance from sibling Crisp plugins ----
+
+/** Minimal vault: `files` maps paths to contents; `configDir` mirrors app.vault.configDir. */
+function fakeApp({ configDir = ".obsidian", files = {}, loaded = {} } = {}) {
+  const folders = new Set();
+  for (const file of Object.keys(files)) {
+    const parts = file.split("/");
+    for (let i = 1; i < parts.length; i++) folders.add(parts.slice(0, i).join("/"));
+  }
+  return {
+    plugins: { plugins: loaded },
+    vault: {
+      configDir,
+      adapter: {
+        exists: async (p) => p in files || folders.has(p),
+        read: async (p) => {
+          if (!(p in files)) throw new Error(`ENOENT ${p}`);
+          return files[p];
+        },
+        list: async (dir) => ({
+          files: Object.keys(files).filter((f) => f.startsWith(`${dir}/`) && !f.slice(dir.length + 1).includes("/")),
+          folders: [...folders].filter((f) => f.startsWith(`${dir}/`) && !f.slice(dir.length + 1).includes("/")),
+        }),
+      },
+    },
+  };
+}
+const dataFile = (code, key = "licenseCode") => JSON.stringify({ [key]: code });
+
+/** Answers per licence code; codes without an entry get `fallback`. */
+function respondPerCode(table, fallback = { status: 200, body: { valid: true } }) {
+  const calls = [];
+  const request = async (input) => {
+    const { licenseCode } = JSON.parse(input.body);
+    calls.push(licenseCode);
+    const { status, body } = table[licenseCode] ?? fallback;
+    return { status, json: body };
+  };
+  return { request, calls };
+}
+
+test("discovery returns every locally valid sibling code in order, deduplicated", async () => {
+  const A = makeCode({ licenseId: "A" });
+  const B = makeCode({ licenseId: "B" });
+  const expired = makeCode({ licenseId: "OLD", expiresAt: "2000-01-01T00:00:00.000Z" });
+  const app = fakeApp({
+    loaded: { "crisp-mind": { settings: { licenseCode: expired } }, "crisp-pulse": { settings: { licenseKey: A } } },
+    files: {
+      ".obsidian/plugins/crisp-focus/data.json": dataFile(A),
+      ".obsidian/plugins/crisp-asr/data.json": dataFile(B, "licenseKey"),
+      ".obsidian/plugins/crisp-tempo/data.json": dataFile(makeCode({ licenseId: "SELF" })),
+      ".obsidian/plugins/other/data.json": dataFile(makeCode({ licenseId: "NOT-CRISP" })),
+    },
+  });
+  assert.deepEqual(await discoverVaultCrispLicenses(app, "crisp-tempo"), [A, B]);
+});
+
+test("discovery reads the configured config directory, not a hard-coded .obsidian", async () => {
+  const A = makeCode({ licenseId: "A" });
+  const app = fakeApp({
+    configDir: ".config-obsidian",
+    files: {
+      ".config-obsidian/plugins/crisp-focus/data.json": dataFile(A),
+      ".obsidian/plugins/crisp-asr/data.json": dataFile(makeCode({ licenseId: "STALE-DIR" })),
+    },
+  });
+  assert.deepEqual(await discoverVaultCrispLicenses(app, "crisp-tempo"), [A]);
+});
+
+test("discovery skips excluded codes and stops at the limit", async () => {
+  const codes = ["A", "B", "C", "D", "E", "F", "G"].map((id) => makeCode({ licenseId: id }));
+  const files = {};
+  codes.forEach((code, i) => (files[`.obsidian/plugins/crisp-p${i}/data.json`] = dataFile(code)));
+  const app = fakeApp({ files });
+  const found = await discoverVaultCrispLicenses(app, "crisp-tempo", { exclude: [codes[0]] });
+  assert.deepEqual(found, codes.slice(1, 6), "excluded codes do not take a slot; at most 5 are returned");
+  assert.deepEqual(await discoverVaultCrispLicenses(app, "crisp-tempo", { limit: 2 }), codes.slice(0, 2));
+});
+
+test("inheritance checks candidates online and skips one the service rejects", async () => {
+  const revoked = makeCode({ licenseId: "REVOKED" });
+  const good = makeCode({ licenseId: "GOOD" });
+  const app = fakeApp({
+    files: {
+      ".obsidian/plugins/crisp-asr/data.json": dataFile(revoked),
+      ".obsidian/plugins/crisp-focus/data.json": dataFile(good),
+    },
+  });
+  const { request, calls } = respondPerCode({ [revoked]: { status: 403, body: { valid: false, reason: "该授权已被吊销" } } });
+  const inherited = await inheritVaultCrispLicense(app, "crisp-tempo", { environment: env({ request }) });
+  assert.equal(inherited?.code, good);
+  assert.equal(inherited?.result.valid, true);
+  assert.deepEqual(calls, [revoked, good], "each candidate reaches the licence service, in order");
+});
+
+test("inheritance returns nothing when every candidate is rejected online", async () => {
+  const revoked = makeCode({ licenseId: "REVOKED" });
+  const app = fakeApp({ files: { ".obsidian/plugins/crisp-asr/data.json": dataFile(revoked) } });
+  const { request } = respondPerCode({}, { status: 200, body: { valid: false, reason: "设备数已达上限" } });
+  assert.equal(await inheritVaultCrispLicense(app, "crisp-tempo", { environment: env({ request }) }), null);
+});
+
+test("inheritance still works offline: a network error falls back to the local signature", async () => {
+  const good = makeCode({ licenseId: "GOOD" });
+  const app = fakeApp({ files: { ".obsidian/plugins/crisp-asr/data.json": dataFile(good) } });
+  const request = async () => { throw new Error("net::ERR_INTERNET_DISCONNECTED"); };
+  const inherited = await inheritVaultCrispLicense(app, "crisp-tempo", { environment: env({ request }) });
+  assert.equal(inherited?.code, good);
+  assert.equal(inherited?.result.source, "offline");
+});
+
+test("inheritance never offers back the excluded code", async () => {
+  const own = makeCode({ licenseId: "OWN" });
+  const app = fakeApp({ files: { ".obsidian/plugins/crisp-asr/data.json": dataFile(own) } });
+  const { request, calls } = respondPerCode({});
+  assert.equal(await inheritVaultCrispLicense(app, "crisp-tempo", { exclude: [own], environment: env({ request }) }), null);
   assert.equal(calls.length, 0);
 });

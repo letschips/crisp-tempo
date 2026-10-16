@@ -313,16 +313,28 @@ export async function verifyLicenseCode(
   }
 }
 
+const MAX_INHERIT_CANDIDATES = 5;
+
+export interface DiscoverOptions {
+  /** Codes never offered as candidates, e.g. Tempo's own code that just failed. */
+  exclude?: string[];
+  /** Upper bound on returned candidates, so inheritance never fans out into many requests. */
+  limit?: number;
+}
+
 /**
- * 自动扫描库内其他 Crisp 插件并继承有效授权
+ * 扫描库内其他 Crisp 插件，按发现顺序返回全部本地签名有效的授权码（去重，最多 limit 个）
  */
-export async function discoverVaultCrispLicense(
+export async function discoverVaultCrispLicenses(
   app: any,
   targetPluginId = "crisp-tempo",
-): Promise<string | null> {
-  if (!app) return null;
+  options: DiscoverOptions = {},
+): Promise<string[]> {
+  if (!app) return [];
   const candidates: string[] = [];
-  const seen = new Set<string>();
+  const seen = new Set<string>(
+    (options.exclude ?? []).map((code) => (code || "").trim()).filter(Boolean),
+  );
 
   const add = (code: unknown) => {
     if (typeof code !== "string") return;
@@ -346,7 +358,8 @@ export async function discoverVaultCrispLicense(
   try {
     const adapter = app.vault?.adapter;
     if (adapter && typeof adapter.list === "function") {
-      const pluginsDir = ".obsidian/plugins";
+      // Vaults can rename .obsidian; plugin code must follow the configured directory.
+      const pluginsDir = `${app.vault?.configDir || ".obsidian"}/plugins`;
       if (await adapter.exists(pluginsDir)) {
         const listing = await adapter.list(pluginsDir);
         for (const folder of listing.folders || []) {
@@ -368,18 +381,36 @@ export async function discoverVaultCrispLicense(
       }
     }
   } catch (err) {
-    console.debug("Tempo discoverVaultCrispLicense adapter scan error:", err);
+    console.debug("Tempo discoverVaultCrispLicenses adapter scan error:", err);
   }
 
-  // 本地离线校验候选码（避免批量请求 worker）
+  // 本地离线校验候选码，只把签名有效的交给调用方在线核对（避免批量请求 worker）
+  const limit = options.limit ?? MAX_INHERIT_CANDIDATES;
+  const valid: string[] = [];
   for (const code of candidates) {
+    if (valid.length >= limit) break;
     const local = await verifyLicenseCode(code, targetPluginId, {
       online: false,
     });
-    if (local.valid) {
-      return code;
-    }
+    if (local.valid) valid.push(code);
   }
 
+  return valid;
+}
+
+/**
+ * 自动继承库内其他 Crisp 插件的授权：候选码逐个在线核对，第一个通过的才继承。
+ * 服务端明确拒绝的候选跳过；断网、超时和 5xx 按 verifyLicenseCode 的规则降级为本地验签。
+ */
+export async function inheritVaultCrispLicense(
+  app: any,
+  targetPluginId = "crisp-tempo",
+  options: DiscoverOptions & { environment?: LicenseCheckEnvironment } = {},
+): Promise<{ code: string; result: LicenseVerifyResult } | null> {
+  const candidates = await discoverVaultCrispLicenses(app, targetPluginId, options);
+  for (const code of candidates) {
+    const result = await verifyLicenseCode(code, targetPluginId, options.environment);
+    if (result.valid) return { code, result };
+  }
   return null;
 }

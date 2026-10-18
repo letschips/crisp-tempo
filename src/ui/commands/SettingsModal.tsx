@@ -1,7 +1,7 @@
 import type { JSX } from "preact";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Notice } from "obsidian";
-import { t, tf, type Locale } from "../../services/i18n";
+import { t, tf, type LanguageSetting, type Locale } from "../../services/i18n";
 import type { LicensePayload, LicenseVerifyResult } from "../../services/license";
 import { installDialogFocus } from "../components/dialog-focus";
 import { CloseIcon, SettingsIcon, TempoLogoIcon } from "../icons/Icons";
@@ -9,6 +9,7 @@ import { CloseIcon, SettingsIcon, TempoLogoIcon } from "../icons/Icons";
 export interface SettingsModalProps {
   isOpen: boolean;
   locale: Locale;
+  language: LanguageSetting;
   version: string;
   defaultDest: "inbox" | "today";
   taskCount: number;
@@ -21,7 +22,7 @@ export interface SettingsModalProps {
   /** Opened because a locked action was attempted: explain it and focus the license field. */
   licenseRequired?: boolean;
   onClose: () => void;
-  onChangeLocale: (locale: Locale) => void;
+  onChangeLocale: (language: LanguageSetting) => void;
   onChangeDefaultDest: (dest: "inbox" | "today") => void;
   onChangeExportFolder?: (folder: string) => void;
   onResetData: () => Promise<boolean>;
@@ -33,6 +34,7 @@ export interface SettingsModalProps {
 export function SettingsModal({
   isOpen,
   locale,
+  language,
   version,
   defaultDest,
   taskCount,
@@ -190,14 +192,21 @@ export function SettingsModal({
               <div className="tempo-segmented-control">
                 <button
                   type="button"
-                  className={`tempo-segmented-btn ${locale === "zh" ? "is-active" : ""}`}
+                  className={`tempo-segmented-btn ${language === "auto" ? "is-active" : ""}`}
+                  onClick={() => onChangeLocale("auto")}
+                >
+                  {t("languageAuto", locale)}
+                </button>
+                <button
+                  type="button"
+                  className={`tempo-segmented-btn ${language === "zh" ? "is-active" : ""}`}
                   onClick={() => onChangeLocale("zh")}
                 >
                   {t("languageZh", locale)}
                 </button>
                 <button
                   type="button"
-                  className={`tempo-segmented-btn ${locale === "en" ? "is-active" : ""}`}
+                  className={`tempo-segmented-btn ${language === "en" ? "is-active" : ""}`}
                   onClick={() => onChangeLocale("en")}
                 >
                   {t("languageEn", locale)}

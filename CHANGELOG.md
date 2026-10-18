@@ -2,6 +2,16 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.3.0] - 2026-10-18
+
+### Added
+- 界面语言默认跟随 Obsidian：Obsidian 设为中文（含繁体）时显示中文，其他语言显示英文。设置里新增「跟随 Obsidian」，也可以固定为简体中文或 English。
+- 授权提示、数据加载与保存报错、导出报错，以及 Crisp Pulse 转任务时的报错，都随界面语言显示。
+
+### Changed
+- 升级前从没手动选过语言的用户改为跟随 Obsidian；手动选过 English 的保持不变。任务数据不受影响。
+- 设置里的语言选项在窄窗口下换到下一行，不再把文字挤成竖排。
+
 ## [0.2.2] - 2026-10-16
 
 ### Fixed

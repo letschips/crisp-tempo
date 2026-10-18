@@ -1,4 +1,47 @@
+import * as obsidian from "obsidian";
+
 export type Locale = "zh" | "en";
+/** What the user chose in settings: follow Obsidian's interface language, or pin one. */
+export type LanguageSetting = "auto" | Locale;
+
+/** Obsidian's interface language: Chinese (incl. Traditional) → zh, anything else → en.
+    Falls back to the stored `language` for older builds; zh when neither is available (tests). */
+export function detectObsidianLocale(): Locale {
+  let lang: string | null = null;
+  try {
+    const getLanguage = (obsidian as { getLanguage?: () => string }).getLanguage;
+    if (typeof getLanguage === "function") lang = String(getLanguage() || "en");
+  } catch {
+    /* fall through */
+  }
+  if (lang === null) {
+    try {
+      const storage = typeof window !== "undefined" ? window.localStorage : null;
+      if (storage) lang = storage.getItem("language") || "en";
+    } catch {
+      /* storage blocked */
+    }
+  }
+  if (lang === null) return "zh";
+  return /^zh\b/i.test(lang) ? "zh" : "en";
+}
+
+export function resolveLocale(setting: LanguageSetting): Locale {
+  return setting === "auto" ? detectObsidianLocale() : setting;
+}
+
+// The resolved locale for code that has no store at hand (licence messages). Kept in sync by the store.
+let activeLocale: Locale | null = null;
+export function setActiveLocale(locale: Locale): void {
+  activeLocale = locale;
+}
+export function getActiveLocale(): Locale {
+  return activeLocale ?? detectObsidianLocale();
+}
+/** Inline pair for messages outside the dictionary: zh text, en text. */
+export function lt(zh: string, en: string): string {
+  return getActiveLocale() === "zh" ? zh : en;
+}
 
 export const translations = {
   zh: {
@@ -123,7 +166,8 @@ export const translations = {
     language: "界面语言",
     languageZh: "简体中文",
     languageEn: "English",
-    languageDesc: "切换界面多语言支持",
+    languageAuto: "跟随 Obsidian",
+    languageDesc: "默认跟随 Obsidian 的界面语言，也可以固定为中文或英文",
     generalSettings: "常规偏好",
     dataSettings: "数据与存储",
     defaultDestination: "新建任务默认去向",
@@ -304,7 +348,8 @@ export const translations = {
     language: "Interface Language",
     languageZh: "简体中文",
     languageEn: "English",
-    languageDesc: "Toggle interface language",
+    languageAuto: "Follow Obsidian",
+    languageDesc: "Follows Obsidian’s interface language by default; you can also pin Chinese or English",
     generalSettings: "General Preferences",
     dataSettings: "Data & Storage",
     defaultDestination: "Default Task Destination",

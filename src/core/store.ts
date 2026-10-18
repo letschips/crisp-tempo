@@ -1,13 +1,16 @@
 import { normalizePath, type DataAdapter, type Plugin, type Stat, type WorkspaceLeaf } from "obsidian";
 import { createEmptyDatabase } from "./mock-data";
-import type { Locale } from "../services/i18n";
+import { lt, resolveLocale, setActiveLocale, type LanguageSetting, type Locale } from "../services/i18n";
 import type { Area, Cycle, Label, Project, Task, TodoDatabase } from "./types";
 import type { LicensePayload, LicenseVerifyResult } from "../services/license";
 import { inheritVaultCrispLicense, verifyLicenseCode } from "../services/license";
 
 export interface TempoPluginData {
   schemaVersion: number;
+  /** Resolved interface language. Written for older builds; on load it is recomputed from `language`. */
   locale: Locale;
+  /** The user's choice: follow Obsidian ("auto", the default) or a pinned language. */
+  language?: LanguageSetting;
   defaultDest?: "inbox" | "today";
   exportFolder?: string;
   licenseKey?: string;
@@ -404,7 +407,7 @@ export class TempoStore {
     // A file that exists but cannot be parsed is never a first install. Refuse to write so
     // the original bytes survive for the user to inspect or restore.
     if (raw.kind === "unreadable") {
-      const detail = `data.json 无法读取：${raw.detail}`;
+      const detail = lt(`data.json 无法读取：${raw.detail}`, `data.json cannot be read: ${raw.detail}`);
       console.error("Crisp Tempo: refusing to load, data.json is unreadable", raw.detail);
       this.status = "error";
       this.loadError = detail;
@@ -413,9 +416,12 @@ export class TempoStore {
     }
 
     if (raw.kind === "missing") {
+      const locale = resolveLocale("auto");
+      setActiveLocale(locale);
       const initial: TempoPluginData = {
         schemaVersion: 1,
-        locale: "zh",
+        locale,
+        language: "auto",
         defaultDest: "inbox",
         database: createEmptyDatabase(),
       };
@@ -436,7 +442,14 @@ export class TempoStore {
     }
 
     const record = payload as Record<string, unknown>;
-    this.loadLocale = record.locale === "en" ? "en" : "zh";
+    // Before 0.3.0 only `locale` existed and new installs wrote "zh" without the user choosing it,
+    // so a stored "zh" means "never chosen" and now follows Obsidian; a stored "en" was a choice.
+    const language: LanguageSetting =
+      record.language === "auto" || record.language === "zh" || record.language === "en"
+        ? record.language
+        : record.locale === "en" ? "en" : "auto";
+    this.loadLocale = resolveLocale(language);
+    setActiveLocale(this.loadLocale);
     const validation = validateDatabase(record.database, { salvage });
     this.loadProblems = validation.problems;
 
@@ -451,7 +464,8 @@ export class TempoStore {
 
     const cleanData: TempoPluginData = {
       schemaVersion: 1,
-      locale: record.locale === "en" ? "en" : "zh",
+      locale: resolveLocale(language),
+      language,
       defaultDest: record.defaultDest === "today" ? "today" : "inbox",
       exportFolder: typeof record.exportFolder === "string" ? record.exportFolder : undefined,
       licenseKey: typeof record.licenseKey === "string" ? record.licenseKey : undefined,
@@ -551,9 +565,9 @@ export class TempoStore {
   }
 
   private static describeTopLevelProblem(payload: unknown): string | null {
-    if (!isRecord(payload)) return "data.json 的顶层结构不是对象";
+    if (!isRecord(payload)) return lt("data.json 的顶层结构不是对象", "The top level of data.json is not an object");
     if (payload.schemaVersion !== undefined && payload.schemaVersion !== 1) {
-      return `不支持的数据结构版本：${String(payload.schemaVersion)}`;
+      return lt(`不支持的数据结构版本：${String(payload.schemaVersion)}`, `Unsupported data schema version: ${String(payload.schemaVersion)}`);
     }
     return null;
   }
@@ -638,12 +652,12 @@ export class TempoStore {
 
     const expectedBytes = new TextEncoder().encode(text).byteLength;
     const stat = await this.statOrNull(adapter, path);
-    if (!stat) throw new Error("data.json 写入后不存在");
+    if (!stat) throw new Error(lt("data.json 写入后不存在", "data.json is missing after writing"));
     if (stat.size !== expectedBytes) {
       // Some adapters normalise line endings, so confirm by reading the file back.
       const echo = await adapter.read(path);
       if (echo !== text) {
-        throw new Error(`data.json 写入不完整（期望 ${expectedBytes} 字节，实际 ${stat.size} 字节）`);
+        throw new Error(lt(`data.json 写入不完整（期望 ${expectedBytes} 字节，实际 ${stat.size} 字节）`, `data.json was written incompletely (expected ${expectedBytes} bytes, got ${stat.size})`));
       }
     }
   }
@@ -701,7 +715,7 @@ export class TempoStore {
    */
   public async exportRawData(customFolder?: string): Promise<string> {
     const adapter = this.adapter;
-    if (!adapter) throw new Error("无法访问文件系统以导出数据");
+    if (!adapter) throw new Error(lt("无法访问文件系统以导出数据", "Cannot access the file system to export data"));
 
     const now = new Date();
     const stamp = `${TempoStore.dayStamp(now)}-${String(now.getHours()).padStart(2, "0")}${String(
@@ -717,7 +731,7 @@ export class TempoStore {
       .replace(/\/{2,}/g, "/")
       .replace(/^\/+|\/+$/g, "");
     if (rawFolder.split("/").some((part) => part === "..")) {
-      throw new Error(`导出目录不能包含 “..”：${rawFolder}`);
+      throw new Error(lt(`导出目录不能包含 “..”：${rawFolder}`, `The export folder cannot contain “..”: ${rawFolder}`));
     }
     const folder = rawFolder ? normalizePath(rawFolder) : "";
 
@@ -790,9 +804,11 @@ export class TempoStore {
     return true;
   }
 
-  public setLocale(locale: Locale): void {
+  public setLanguage(language: LanguageSetting): void {
     if (!this.data) return;
-    this.data = { ...this.data, locale };
+    const locale = resolveLocale(language);
+    setActiveLocale(locale);
+    this.data = { ...this.data, language, locale };
     this.notify();
     this.saveDebounced();
   }

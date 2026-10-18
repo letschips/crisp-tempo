@@ -1,4 +1,5 @@
 import type { Task, TaskStatus, TodoDatabase } from "../core/types";
+import { lt } from "./i18n";
 
 /** What another plugin (e.g. Crisp Pulse) sends to turn one of its items into a task. */
 export interface SourceTaskInput {
@@ -46,9 +47,9 @@ export function upsertSourceTask(
   input: SourceTaskInput,
   options: { dest: "inbox" | "today"; today: string; now: number; id: string },
 ): { db: TodoDatabase; task: Task; created: boolean } {
-  if (!SOURCE_ID_RE.test(input.sourceId)) throw new Error("来源标识无效");
+  if (!SOURCE_ID_RE.test(input.sourceId)) throw new Error(lt("来源标识无效", "Invalid source ID"));
   const title = String(input.title ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_TITLE);
-  if (!title) throw new Error("任务标题为空");
+  if (!title) throw new Error(lt("任务标题为空", "The task title is empty"));
   const existing = findSourceTask(db, input.sourceId);
   if (existing) return { db, task: existing, created: false };
   const description = input.description?.trim().slice(0, MAX_DESCRIPTION) || undefined;

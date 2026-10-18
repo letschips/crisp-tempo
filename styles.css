@@ -1636,6 +1636,7 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
 
 .tempo-settings-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -1644,6 +1645,8 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
 .tempo-settings-label-group {
   display: flex;
   flex-direction: column;
+  flex: 1 1 200px;
+  min-width: 0;
   gap: 2px;
 }
 
@@ -1665,11 +1668,13 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   border-radius: 8px;
   border: 1px solid var(--tempo-ui-border);
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .tempo-segmented-btn {
   all: unset;
   cursor: pointer;
+  white-space: nowrap;
   padding: 4px 10px;
   font-size: 12px;
   font-weight: 500;

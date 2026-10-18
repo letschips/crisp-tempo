@@ -1,4 +1,5 @@
 import { requestUrl } from "obsidian";
+import { lt } from "./i18n";
 
 export interface LicensePayload {
   product: string;
@@ -118,7 +119,7 @@ function subtleCrypto(): SubtleCrypto | undefined {
 
 export async function importEd25519PublicKey(pem: string): Promise<CryptoKey> {
   const subtle = subtleCrypto();
-  if (!subtle) throw new Error("WebCrypto 在当前运行环境不可用");
+  if (!subtle) throw new Error(lt("WebCrypto 在当前运行环境不可用", "WebCrypto is not available in this environment"));
   const pemContents = pem
     .replace("-----BEGIN PUBLIC KEY-----", "")
     .replace("-----END PUBLIC KEY-----", "")
@@ -172,12 +173,12 @@ export async function verifyLicenseCode(
 
   const trimmed = (licenseCode || "").trim();
   if (!trimmed) {
-    return { valid: false, reason: "授权码为空" };
+    return { valid: false, reason: lt("授权码为空", "License code is empty") };
   }
 
   const parts = trimmed.split(".");
   if (parts.length !== 2) {
-    return { valid: false, reason: "授权码格式无效（必须包含 payload 与签名）" };
+    return { valid: false, reason: lt("授权码格式无效（必须包含 payload 与签名）", "Invalid license code format (it must contain a payload and a signature)") };
   }
 
   const [payloadBase64, signatureBase64] = parts;
@@ -187,30 +188,30 @@ export async function verifyLicenseCode(
     try {
       payloadJson = new TextDecoder().decode(base64UrlToUint8Array(payloadBase64));
     } catch {
-      return { valid: false, reason: "无法解码授权载荷数据" };
+      return { valid: false, reason: lt("无法解码授权载荷数据", "Cannot decode the license payload") };
     }
 
     const payload = JSON.parse(payloadJson) as LicensePayload;
     if (!payload || typeof payload !== "object") {
-      return { valid: false, reason: "授权载荷格式不正确" };
+      return { valid: false, reason: lt("授权载荷格式不正确", "The license payload is malformed") };
     }
 
     if (!CRISP_FAMILY_PRODUCTS.includes(payload.product as (typeof CRISP_FAMILY_PRODUCTS)[number])) {
-      return { valid: false, reason: "授权码不属于 Crisp 系列插件" };
+      return { valid: false, reason: lt("授权码不属于 Crisp 系列插件", "This license code is not for Crisp plugins") };
     }
 
     const features = Array.isArray(payload.features) ? payload.features : [];
     const hasFeaturePermission =
       features.includes("all") || features.includes(targetPluginId);
     if (!hasFeaturePermission) {
-      return { valid: false, reason: `该授权码未包含 ${targetPluginId} 权限` };
+      return { valid: false, reason: lt(`该授权码未包含 ${targetPluginId} 权限`, `This license code does not include ${targetPluginId}`) };
     }
 
     if (payload.expiresAt) {
       const expireTime = new Date(payload.expiresAt).getTime();
       if (Number.isFinite(expireTime) && now > expireTime) {
         const formattedDate = String(payload.expiresAt).split("T")[0];
-        return { valid: false, reason: `授权已于 ${formattedDate} 到期` };
+        return { valid: false, reason: lt(`授权已于 ${formattedDate} 到期`, `License expired on ${formattedDate}`) };
       }
     }
 
@@ -228,7 +229,7 @@ export async function verifyLicenseCode(
     const publicKey = await importEd25519PublicKey(CRISP_PUBLIC_KEY_PEM);
     const subtle = subtleCrypto();
     if (!subtle) {
-      return { valid: false, reason: "WebCrypto 在当前运行环境不可用" };
+      return { valid: false, reason: lt("WebCrypto 在当前运行环境不可用", "WebCrypto is not available in this environment") };
     }
 
     const isSignatureValid = await subtle.verify(
@@ -239,12 +240,12 @@ export async function verifyLicenseCode(
     );
 
     if (!isSignatureValid) {
-      return { valid: false, reason: "授权签名无效或已被篡改" };
+      return { valid: false, reason: lt("授权签名无效或已被篡改", "The license signature is invalid or has been tampered with") };
     }
 
     // 本地校验已完全通过，如不要求在线核验则直接返回
     if (!isOnlineCheckAllowed) {
-      return { valid: true, payload, source: "local", message: "本地签名校验通过" };
+      return { valid: true, payload, source: "local", message: lt("本地签名校验通过", "Local signature check passed") };
     }
 
     // 在线核验吊销与设备数。只有服务端才知道这两件事，所以它明确给出的拒绝必须生效：
@@ -282,7 +283,7 @@ export async function verifyLicenseCode(
         if (isAuthDenial) {
           return {
             valid: false,
-            reason: cloudResult?.reason || "授权已被服务端拒绝或设备数已达上限",
+            reason: cloudResult?.reason || lt("授权已被服务端拒绝或设备数已达上限", "The license was rejected by the server or the device limit was reached"),
           };
         }
 
@@ -301,7 +302,7 @@ export async function verifyLicenseCode(
           valid: true,
           payload,
           source: "offline",
-          message: "离线验证成功（本地密码学验签通过）",
+          message: lt("离线验证成功（本地密码学验签通过）", "Verified offline (local signature check passed)"),
         };
       }
     }
@@ -309,7 +310,7 @@ export async function verifyLicenseCode(
     return { valid: true, payload, source: "local" };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    return { valid: false, reason: `解析授权码失败: ${msg}` };
+    return { valid: false, reason: lt(`解析授权码失败: ${msg}`, `Failed to parse license code: ${msg}`) };
   }
 }
 

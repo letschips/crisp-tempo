@@ -1,7 +1,7 @@
 import { Plugin, PluginSettingTab, Setting, Notice, addIcon, type App, type WorkspaceLeaf } from "obsidian";
 import { TempoStore } from "./core/store";
 import { TempoView, TEMPO_VIEW_TYPE } from "./views/TempoView";
-import { t, tf } from "./services/i18n";
+import { lt, t, tf, type LanguageSetting } from "./services/i18n";
 import { getTodayString } from "./services/date-service";
 import {
   findSourceTask,
@@ -91,10 +91,10 @@ export default class CrispTempoPlugin extends Plugin {
   /* ---------- Public API for other plugins (Crisp Pulse) ---------- */
 
   private async readyStore(): Promise<TempoStore> {
-    if (this.unloaded) throw new Error("Crisp Tempo 已停用");
+    if (this.unloaded) throw new Error(lt("Crisp Tempo 已停用", "Crisp Tempo is disabled"));
     const store = TempoStore.get(this);
     if (store.status !== "ready" || !store.data) await store.load();
-    if (store.status !== "ready" || !store.data) throw new Error(`Crisp Tempo 数据未能加载：${store.loadError ?? "未知原因"}`);
+    if (store.status !== "ready" || !store.data) throw new Error(lt(`Crisp Tempo 数据未能加载：${store.loadError ?? "未知原因"}`, `Crisp Tempo data could not be loaded: ${store.loadError ?? "unknown reason"}`));
     return store;
   }
 
@@ -106,7 +106,7 @@ export default class CrispTempoPlugin extends Plugin {
     const store = await this.readyStore();
     const data = store.data!;
     const existing = findSourceTask(data.database, input.sourceId);
-    if (!existing && data.licenseStatus !== "valid") throw new Error("新建任务需要先激活 Crisp Tempo");
+    if (!existing && data.licenseStatus !== "valid") throw new Error(lt("新建任务需要先激活 Crisp Tempo", "Activate Crisp Tempo before creating tasks"));
     const now = Date.now();
     const result = upsertSourceTask(data.database, input, {
       dest: data.defaultDest === "today" ? "today" : "inbox",
@@ -117,7 +117,7 @@ export default class CrispTempoPlugin extends Plugin {
     // Not added to Tempo's undo history: undoing there would silently drop a task another plugin points to.
     if (result.created) store.updateDatabase(() => result.db, false);
     await store.flush();
-    if (store.hasPendingSave) throw new Error(`Crisp Tempo 保存失败：${store.saveError ?? "未知原因"}`);
+    if (store.hasPendingSave) throw new Error(lt(`Crisp Tempo 保存失败：${store.saveError ?? "未知原因"}`, `Crisp Tempo failed to save: ${store.saveError ?? "unknown reason"}`));
     return toSourceSnapshot(result.task);
   }
 
@@ -135,7 +135,7 @@ export default class CrispTempoPlugin extends Plugin {
   /** Opens Tempo with the task selected. */
   async revealTask(taskId: string): Promise<void> {
     const store = await this.readyStore();
-    if (!store.data!.database.tasks[taskId]) throw new Error("这个任务在 Tempo 里已经不存在");
+    if (!store.data!.database.tasks[taskId]) throw new Error(lt("这个任务在 Tempo 里已经不存在", "This task no longer exists in Tempo"));
     await this.activateView();
     store.revealTask(taskId);
   }
@@ -280,11 +280,12 @@ class CrispTempoSettingTab extends PluginSettingTab {
       .setName(t("language", locale))
       .setDesc(t("languageDesc", locale))
       .addDropdown((dd) => {
-        dd.addOption("zh", t("languageZh", locale))
+        dd.addOption("auto", t("languageAuto", locale))
+          .addOption("zh", t("languageZh", locale))
           .addOption("en", t("languageEn", locale))
-          .setValue(locale)
+          .setValue(data.language ?? "auto")
           .onChange((val) => {
-            store.setLocale(val as any);
+            store.setLanguage(val as LanguageSetting);
             this.display();
           });
       });

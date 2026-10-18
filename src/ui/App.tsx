@@ -20,7 +20,7 @@ import {
 import { TempoStore } from "../core/store";
 import type { Cycle, Project, Task, TaskPriority, TaskStatus, TodoDatabase } from "../core/types";
 import { getTodayString } from "../services/date-service";
-import { t, tf, type Locale } from "../services/i18n";
+import { t, tf, type LanguageSetting, type Locale } from "../services/i18n";
 import { CycleModal } from "./commands/CycleModal";
 import { MobileNavModal } from "./commands/MobileNavModal";
 import { ProjectModal } from "./commands/ProjectModal";
@@ -624,8 +624,8 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
   };
 
   // Change locale
-  const handleChangeLocale = (newLocale: Locale) => {
-    store.setLocale(newLocale);
+  const handleChangeLocale = (language: LanguageSetting) => {
+    store.setLanguage(language);
   };
 
   // Change default destination
@@ -1039,6 +1039,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
           <SettingsModal
             isOpen={true}
             locale={locale}
+            language={storeState.data.language ?? "auto"}
             version={plugin?.manifest?.version || "0.1.0"}
             defaultDest={defaultDest}
             taskCount={taskList.length}

@@ -1,7 +1,7 @@
 import type { JSX } from "preact";
 import type { Project, Task } from "../../core/types";
 import { formatHeaderDate } from "../../services/date-service";
-import { t, type Locale } from "../../services/i18n";
+import { t, tf, type Locale } from "../../services/i18n";
 import { PlusIcon, TodayIcon } from "../icons/Icons";
 import { TaskRow } from "../tasks/TaskRow";
 
@@ -44,7 +44,7 @@ export function TodayView({
             {formatHeaderDate(today ? new Date(today + "T00:00:00") : new Date(), locale)}
           </span>
           <span className="tempo-nav-badge">
-            {tasks.filter((t) => t.status !== "done" && t.status !== "canceled").length} {t("tasksUnit", locale)}
+            {tf("taskCount", locale, { n: tasks.filter((t) => t.status !== "done" && t.status !== "canceled").length })}
           </span>
         </div>
         <button

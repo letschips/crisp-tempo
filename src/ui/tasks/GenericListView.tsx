@@ -1,7 +1,7 @@
 import type { JSX } from "preact";
 import { getProgress } from "../../core/selectors";
 import type { Project, Task } from "../../core/types";
-import { t, type Locale } from "../../services/i18n";
+import { t, tf, type Locale } from "../../services/i18n";
 import { PlusIcon } from "../icons/Icons";
 import { TaskRow } from "./TaskRow";
 
@@ -79,7 +79,7 @@ export function GenericListView({
             className="tempo-nav-badge"
             style={{ whiteSpace: "nowrap", flexShrink: 0, display: "inline-flex", alignItems: "center" }}
           >
-            {tasks.length} {t("tasksUnit", locale)}
+            {tf("taskCount", locale, { n: tasks.length })}
           </span>
         </div>
         <div className="tempo-card-header-actions">

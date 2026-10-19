@@ -2,6 +2,12 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.3.1] - 2026-10-19
+
+### Fixed
+- 英文界面里数量为 1 时显示「1 tasks」「1 items」「1 devices」等。现在列表、看板指标、删除确认、重置提示和数据问题提示都按单复数显示。
+- 中文界面下命令面板里 Tempo 的命令仍是英文。现在「打开任务看板」「快速新建任务」跟随 Obsidian 的界面语言。
+
 ## [0.3.0] - 2026-10-18
 
 ### Added

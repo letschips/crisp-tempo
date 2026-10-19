@@ -114,7 +114,7 @@ export const translations = {
     createBtn: "创建任务",
     cancelBtn: "取消",
     backBtn: "返回列表",
-    tasksUnit: "项",
+    taskCount: "{n} 项",
     undoBtn: "撤销",
     settings: "设置",
     newProject: "新建项目",
@@ -296,7 +296,7 @@ export const translations = {
     createBtn: "Create Task",
     cancelBtn: "Cancel",
     backBtn: "Back",
-    tasksUnit: "tasks",
+    taskCount: "{n} {n|task|tasks}",
     undoBtn: "Undo",
     settings: "Settings",
     newProject: "New Project",
@@ -335,8 +335,8 @@ export const translations = {
     editCycle: "Edit Cycle",
     deleteProject: "Delete Project",
     deleteCycle: "Delete Cycle",
-    confirmDeleteProject: "Confirm delete ({n} tasks leave the project and are kept)",
-    confirmDeleteCycle: "Confirm delete ({n} tasks leave the cycle and are kept)",
+    confirmDeleteProject: "Confirm delete ({n} {n|task leaves|tasks leave} the project and {n|is|are} kept)",
+    confirmDeleteCycle: "Confirm delete ({n} {n|task leaves|tasks leave} the cycle and {n|is|are} kept)",
     projectDeleted: "Deleted project “{title}”. Press ⌘Z to undo",
     cycleDeleted: "Deleted cycle “{title}”. Press ⌘Z to undo",
     cycleNowBadge: "NOW",
@@ -344,7 +344,7 @@ export const translations = {
     authorLink: "letschips on Xiaohongshu",
     defaultUserName: "Crisp user",
     unknownReason: "unknown reason",
-    confirmDelete: "Confirm delete ({n} items)",
+    confirmDelete: "Confirm delete ({n} {n|item|items})",
     language: "Interface Language",
     languageZh: "简体中文",
     languageEn: "English",
@@ -355,7 +355,7 @@ export const translations = {
     defaultDestination: "Default Task Destination",
     defaultDestDesc: "Default triage box when quickly creating tasks",
     resetData: "Reset All Data",
-    resetWarning: "Currently contains {t} tasks, {p} projects, {c} cycles. This will reset to a clean blank database. You can undo via ⌘Z.",
+    resetWarning: "Currently contains {t} {t|task|tasks}, {p} {p|project|projects}, {c} {c|cycle|cycles}. This will reset to a clean blank database. You can undo via ⌘Z.",
     resetSuccess: "Successfully reset to empty database",
     resetNotSaved: "Reset was not saved. Please retry.",
     confirmReset: "Confirm reset",
@@ -379,9 +379,9 @@ export const translations = {
     loadErrorTitle: "Task database could not be loaded",
     loadErrorDesc: "No valid task structure could be read. Writing is blocked to protect your existing data.",
     retryLoad: "Retry",
-    loadProblemsTitle: "{n} data problems found",
+    loadProblemsTitle: "{n} data {n|problem|problems} found",
     salvageHint: "Skipping keeps everything else and removes these entries permanently. The original file is already backed up as data.json.bak-*.",
-    salvageAction: "Skip {n} broken entries and continue",
+    salvageAction: "Skip {n} broken {n|entry|entries} and continue",
     salvageConfirm: "Confirm and continue",
     exportRawData: "Export data file",
     saving: "Saving…",
@@ -402,7 +402,7 @@ export const translations = {
     licenseExpires: "Expires",
     licenseNeverExpires: "Perpetual / Never",
     licenseDevices: "Device Limit",
-    licenseDevicesLimit: "{n} devices",
+    licenseDevicesLimit: "{n} {n|device|devices}",
     licenseSuccess: "🎉 Crisp Tempo activated successfully! Welcome, {user}",
     licenseFailed: "❌ Activation failed: {reason}",
     licenseCleared: "License cleared successfully",
@@ -416,13 +416,17 @@ export function t(key: TranslationKey, locale: Locale): string {
   return translations[locale]?.[key] || translations["zh"][key] || key;
 }
 
-/** Same as `t`, with `{name}` placeholders replaced from `params`. */
+/** Same as `t`, with `{name}` placeholders replaced from `params`.
+    `{name|one|many}` picks the English singular or plural form by the count in `params[name]`. */
 export function tf(
   key: TranslationKey,
   locale: Locale,
   params: Record<string, string | number>,
 ): string {
-  return t(key, locale).replace(/\{(\w+)\}/g, (match, name: string) =>
-    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match,
-  );
+  const has = (name: string) => Object.prototype.hasOwnProperty.call(params, name);
+  return t(key, locale)
+    .replace(/\{(\w+)\|([^|}]*)\|([^}]*)\}/g, (match, name: string, one: string, many: string) =>
+      has(name) ? (Number(params[name]) === 1 ? one : many) : match,
+    )
+    .replace(/\{(\w+)\}/g, (match, name: string) => (has(name) ? String(params[name]) : match));
 }

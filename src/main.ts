@@ -1,7 +1,7 @@
 import { Plugin, PluginSettingTab, Setting, Notice, addIcon, type App, type WorkspaceLeaf } from "obsidian";
 import { TempoStore } from "./core/store";
 import { TempoView, TEMPO_VIEW_TYPE } from "./views/TempoView";
-import { lt, t, tf, type LanguageSetting } from "./services/i18n";
+import { detectObsidianLocale, lt, t, tf, type LanguageSetting } from "./services/i18n";
 import { getTodayString } from "./services/date-service";
 import {
   findSourceTask,
@@ -44,10 +44,12 @@ export default class CrispTempoPlugin extends Plugin {
       void this.activateView();
     });
 
-    // Obsidian Commands
+    // Obsidian Commands: names are fixed at registration (before Tempo's data loads), so they follow
+    // Obsidian's interface language like the rest of the command palette.
+    const commandLocale = detectObsidianLocale();
     this.addCommand({
       id: "open-tempo-view",
-      name: "Open Tempo Task Manager",
+      name: commandLocale === "zh" ? "打开任务看板" : "Open Tempo Task Manager",
       callback: () => {
         void this.activateView();
       },
@@ -55,7 +57,7 @@ export default class CrispTempoPlugin extends Plugin {
 
     this.addCommand({
       id: "quick-add-task",
-      name: "Quick Add Task",
+      name: commandLocale === "zh" ? "快速新建任务" : "Quick Add Task",
       callback: async () => {
         const leaf = await this.activateView();
         if (leaf) TempoStore.get(this).openQuickAdd(leaf);

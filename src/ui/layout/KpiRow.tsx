@@ -1,6 +1,6 @@
 import type { JSX } from "preact";
 import type { KpiStats } from "../../core/selectors";
-import { t, type Locale } from "../../services/i18n";
+import { t, tf, type Locale } from "../../services/i18n";
 
 interface KpiRowProps {
   stats: KpiStats;
@@ -19,7 +19,7 @@ export function KpiRow({ stats, locale, activeNav, onSelectNav }: KpiRowProps): 
       nav: "today",
       highlight: "today",
       label: t("todayKpi", locale),
-      val: `${stats.todayRemaining} ${t("tasksUnit", locale)}`,
+      val: tf("taskCount", locale, { n: stats.todayRemaining }),
       sub: t("today", locale),
     },
     {
@@ -27,7 +27,7 @@ export function KpiRow({ stats, locale, activeNav, onSelectNav }: KpiRowProps): 
       nav: "today",
       highlight: null,
       label: t("inProgressKpi", locale),
-      val: `${stats.inProgress} ${t("tasksUnit", locale)}`,
+      val: tf("taskCount", locale, { n: stats.inProgress }),
       sub: t("inProgress", locale),
     },
     {
@@ -35,7 +35,7 @@ export function KpiRow({ stats, locale, activeNav, onSelectNav }: KpiRowProps): 
       nav: "inbox",
       highlight: "inbox",
       label: t("inboxKpi", locale),
-      val: `${stats.inbox} ${t("tasksUnit", locale)}`,
+      val: tf("taskCount", locale, { n: stats.inbox }),
       sub: t("inboxSubtitle", locale),
     },
     {
@@ -43,7 +43,7 @@ export function KpiRow({ stats, locale, activeNav, onSelectNav }: KpiRowProps): 
       nav: "completed",
       highlight: "completed",
       label: t("doneKpi", locale),
-      val: `${stats.todayDone} ${t("tasksUnit", locale)}`,
+      val: tf("taskCount", locale, { n: stats.todayDone }),
       sub: t("completedLog", locale),
     },
   ];

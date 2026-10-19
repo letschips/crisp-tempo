@@ -1,6 +1,6 @@
 // 界面语言测试：默认跟随 Obsidian 的界面语言，也可以在设置里固定中文或英文。
 // 失败模式：英文 Obsidian 下新装仍是中文；老用户手动选过的英文被改回去；固定的语言被 Obsidian 覆盖；
-// 授权报错在英文界面仍是中文；切换语言后任务数据被改动。
+// 授权报错在英文界面仍是中文；切换语言后任务数据被改动；英文计数出现「1 tasks」；英文文案里混进中文。
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -22,13 +22,14 @@ writeFileSync(entry, [
   `export { TempoStore } from ${JSON.stringify(path.join(root, "src/core/store.ts"))};`,
   `export { createEmptyDatabase } from ${JSON.stringify(path.join(root, "src/core/mock-data.ts"))};`,
   `export { verifyLicenseCode } from ${JSON.stringify(path.join(root, "src/services/license.ts"))};`,
+  `export { tf, translations } from ${JSON.stringify(path.join(root, "src/services/i18n.ts"))};`,
 ].join("\n"));
 await esbuild.build({
   entryPoints: [entry], bundle: true, format: "esm", platform: "node",
   outfile: path.join(outDir, "store.mjs"), logLevel: "error", alias: { obsidian: stub },
 });
 globalThis.window = { app: { appId: "test-device" } };
-const { TempoStore, createEmptyDatabase, verifyLicenseCode } = await import(pathToFileURL(path.join(outDir, "store.mjs")).href);
+const { TempoStore, createEmptyDatabase, verifyLicenseCode, tf, translations } = await import(pathToFileURL(path.join(outDir, "store.mjs")).href);
 
 const DATA = ".obsidian/plugins/crisp-tempo/data.json";
 function setup(disk) {
@@ -110,4 +111,22 @@ test("授权报错随界面语言显示", async () => {
   assert.equal((await verifyLicenseCode("", "crisp-tempo")).reason, "License code is empty");
   store.setLanguage("zh");
   assert.equal((await verifyLicenseCode("", "crisp-tempo")).reason, "授权码为空");
+});
+
+test("英文计数按单复数显示，中文不受影响", () => {
+  assert.equal(tf("taskCount", "en", { n: 1 }), "1 task");
+  assert.equal(tf("taskCount", "en", { n: 0 }), "0 tasks");
+  assert.equal(tf("taskCount", "zh", { n: 1 }), "1 项");
+  assert.equal(tf("confirmDelete", "en", { n: 1 }), "Confirm delete (1 item)");
+  assert.equal(tf("confirmDeleteProject", "en", { n: 1 }), "Confirm delete (1 task leaves the project and is kept)");
+  assert.equal(tf("confirmDeleteCycle", "en", { n: 3 }), "Confirm delete (3 tasks leave the cycle and are kept)");
+  assert.match(tf("resetWarning", "en", { t: 1, p: 2, c: 1 }), /^Currently contains 1 task, 2 projects, 1 cycle\./);
+});
+
+test("英文词典不含中文（语言选项里的「简体中文」除外），也没有漏替换的占位符", () => {
+  for (const [key, text] of Object.entries(translations.en)) {
+    if (key === "languageZh") continue;
+    assert.doesNotMatch(text, /[\u3400-\u9fff]/, key);
+    assert.doesNotMatch(tf(key, "en", { n: 2, t: 2, p: 2, c: 2 }), /\{(n|t|p|c)\b/, key);
+  }
 });

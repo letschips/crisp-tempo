@@ -4,6 +4,7 @@ import { lt, resolveLocale, setActiveLocale, type LanguageSetting, type Locale }
 import type { Area, Cycle, Label, Project, Task, TodoDatabase } from "./types";
 import type { LicensePayload, LicenseVerifyResult } from "../services/license";
 import { inheritVaultCrispLicense, verifyLicenseCode } from "../services/license";
+import { addFocusEntry, cleanFocusLog, type ActiveFocus, type FocusEntry, type FocusLog } from "../services/focus-bridge";
 
 export interface TempoPluginData {
   schemaVersion: number;
@@ -18,6 +19,8 @@ export interface TempoPluginData {
   licensePayload?: LicensePayload;
   licenseLastVerified?: number;
   database: TodoDatabase;
+  /** Crisp Focus sessions spent on each task. Outside `database`, so undo never removes them. */
+  focusLog?: FocusLog;
 }
 
 export type StoreLoadStatus = "loading" | "ready" | "error";
@@ -265,6 +268,8 @@ export class TempoStore {
   private currentRevision = 0;
   private savedRevision = 0;
   private loadPromise: Promise<TempoPluginData> | null = null;
+  /** The Tempo task Crisp Focus is working on now. Runtime only, never saved. */
+  private activeFocusState: ActiveFocus | null = null;
 
   public static get(plugin: Plugin): TempoStore {
     let instance = TempoStore.instances.get(plugin);
@@ -478,6 +483,7 @@ export class TempoStore {
       licensePayload: isRecord(record.licensePayload)
         ? (record.licensePayload as any)
         : undefined,
+      focusLog: TempoStore.loadFocusLog(record.focusLog),
       licenseLastVerified:
         typeof record.licenseLastVerified === "number"
           ? record.licenseLastVerified
@@ -562,6 +568,13 @@ export class TempoStore {
     } catch (err) {
       console.debug("Crisp Tempo: background license check failed", err);
     }
+  }
+
+  /** Focus time is secondary to the tasks: a damaged log keeps its good entries and never blocks loading. */
+  private static loadFocusLog(raw: unknown): FocusLog | undefined {
+    const { log, dropped } = cleanFocusLog(raw);
+    if (dropped) console.warn(`Crisp Tempo: dropped ${dropped} unreadable focus record(s)`);
+    return Object.keys(log).length ? log : undefined;
   }
 
   private static describeTopLevelProblem(payload: unknown): string | null {
@@ -818,6 +831,38 @@ export class TempoStore {
     this.data = { ...this.data, defaultDest };
     this.notify();
     this.saveDebounced();
+  }
+
+  public get focusLog(): FocusLog {
+    return this.data?.focusLog ?? {};
+  }
+
+  /**
+   * Records a focus session on a task and waits until it is on disk. Resolves false when this
+   * session was already recorded. Not part of undo: the time was spent whatever is undone later.
+   */
+  public async recordFocusEntry(taskId: string, entry: FocusEntry): Promise<boolean> {
+    if (this.status !== "ready" || !this.data) throw new Error(lt("Crisp Tempo 数据未加载，专注记录没有保存", "Crisp Tempo data is not loaded; the focus session was not saved"));
+    const log = this.focusLog;
+    const next = addFocusEntry(log, taskId, entry);
+    if (next === log) return false;
+    this.data = { ...this.data, focusLog: next };
+    this.notify();
+    this.saveDebounced(50);
+    await this.flush();
+    if (this.hasPendingSave) throw new Error(lt(`Crisp Tempo 保存失败：${this.saveError ?? "未知原因"}`, `Crisp Tempo failed to save: ${this.saveError ?? "unknown reason"}`));
+    return true;
+  }
+
+  public get activeFocus(): ActiveFocus | null {
+    return this.activeFocusState;
+  }
+
+  public setActiveFocus(next: ActiveFocus | null): void {
+    const prev = this.activeFocusState;
+    if (prev?.taskId === next?.taskId && prev?.state === next?.state) return;
+    this.activeFocusState = next;
+    this.notify();
   }
 
   public setExportFolder(exportFolder: string): void {

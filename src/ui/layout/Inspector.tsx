@@ -3,6 +3,7 @@ import { useLayoutEffect, useState } from "preact/hooks";
 import type { Cycle, Project, Task, TaskPriority, TaskStatus } from "../../core/types";
 import { getTodayString } from "../../services/date-service";
 import { t, tf, type Locale } from "../../services/i18n";
+import { summarizeFocus, type ActiveFocus, type FocusEntry } from "../../services/focus-bridge";
 import { DatePickerPopover } from "../components/DatePickerPopover";
 import { CloseIcon, PlusIcon, StatusIcon } from "../icons/Icons";
 
@@ -23,6 +24,55 @@ interface InspectorProps {
   onRequestLicense?: () => void;
   /** Opens the note a task came from (set by tasks created from another plugin, e.g. Pulse memos). */
   onOpenSource?: (notePath: string) => void;
+  /** Crisp Focus time on this task. Hidden when Focus is not installed and nothing was recorded. */
+  focus?: {
+    status: "ready" | "outdated" | "missing";
+    entries?: FocusEntry[];
+    active: ActiveFocus | null;
+    onStart: (mode: "pomodoro" | "single") => void;
+    onOpenTimer: () => void;
+  };
+}
+
+const FOCUS_STATE_KEYS = {
+  running: "focusStateRunning",
+  paused: "focusStatePaused",
+  break: "focusStateBreak",
+  waiting: "focusStateWaiting",
+} as const;
+
+function FocusSection({ taskId, focus, locale }: { taskId: string; focus: NonNullable<InspectorProps["focus"]>; locale: Locale }): JSX.Element | null {
+  const summary = summarizeFocus(focus.entries);
+  if (focus.status === "missing" && summary.sessions === 0) return null;
+  const here = focus.active?.taskId === taskId ? focus.active.state : null;
+  const elsewhere = !!focus.active && !here;
+  const total = summary.minutes >= 60
+    ? tf("focusTotalHours", locale, { h: Math.floor(summary.minutes / 60), m: summary.minutes % 60 })
+    : tf("focusTotalMinutes", locale, { m: summary.minutes });
+  return (
+    <div className="tempo-focus-section">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)" }}>{t("focusSection", locale)}</span>
+        {summary.sessions > 0 && <span className="tempo-focus-total">{total}</span>}
+      </div>
+      {focus.status === "ready" && (here ? (
+        <div className="tempo-focus-row">
+          <span className={`tempo-focus-state is-${here}`}>{t(FOCUS_STATE_KEYS[here], locale)}</span>
+          <button type="button" className="tempo-action-btn" onClick={focus.onOpenTimer}>{t("focusOpenPanel", locale)}</button>
+        </div>
+      ) : (
+        <div className="tempo-focus-row">
+          <button type="button" className="tempo-action-btn" onClick={() => focus.onStart("pomodoro")}>{t("focusStartPomodoro", locale)}</button>
+          <button type="button" className="tempo-action-btn" onClick={() => focus.onStart("single")}>{t("focusStartSingle", locale)}</button>
+        </div>
+      ))}
+      {focus.status === "ready" && elsewhere && <span className="tempo-focus-note">{t("focusElsewhere", locale)}</span>}
+      {focus.status === "outdated" && <span className="tempo-focus-note">{t("focusOutdated", locale)}</span>}
+      <span className="tempo-focus-note">
+        {summary.sessions > 0 ? tf("focusCounts", locale, { done: summary.completed, cut: summary.interrupted }) : t("focusEmpty", locale)}
+      </span>
+    </div>
+  );
 }
 
 /** "Pulse 速记 · 2026-10-09 速记" for Pulse memos, otherwise the note's name. */
@@ -46,6 +96,7 @@ export function Inspector({
   canAddSubtask = true,
   onRequestLicense,
   onOpenSource,
+  focus,
 }: InspectorProps): JSX.Element {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [titleDraft, setTitleDraft] = useState(task.title);
@@ -264,6 +315,8 @@ export function Inspector({
             </>
           )}
         </div>
+
+        {focus && <FocusSection taskId={task.id} focus={focus} locale={locale} />}
 
         {/* Description Section. Committed on blur: persisting per keystroke would push one
             undo snapshot and one full-database clone for every character typed. */}

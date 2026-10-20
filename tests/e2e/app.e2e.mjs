@@ -750,6 +750,69 @@ await scenario('pulse_task_reveal_and_source_link', async () => {
   return { revealed: true, sourceOpened: true };
 });
 
+await scenario('focus_time_on_a_task', async () => {
+  const p = await boot({ paneWidth: 760 });
+  await p.evaluate(() => {
+    window.__focusCalls = [];
+    window.__focus = {
+      focusApiVersion: 2,
+      async startPomodoro(options) { __focusCalls.push(['pomodoro', options]); return {}; },
+      async startFocusSession(minutes, options) { __focusCalls.push(['single', minutes, options]); return {}; },
+      getPomodoroSnapshot: () => ({ status: 'idle' }),
+      openPomodoroModal() { window.__timerOpened = true; },
+    };
+    plugin.app.plugins = { plugins: { 'crisp-focus': __focus }, enabledPlugins: new Set(['crisp-focus']) };
+  });
+  await task(p, 'Primary Task');
+  const section = p.locator('.tempo-focus-section');
+  await section.waitFor();
+  assert.equal((await section.textContent()).includes('还没有专注记录'), true);
+  await section.getByRole('button', { name: '开始番茄' }).click();
+  await section.getByRole('button', { name: '单次专注' }).click();
+  const calls = await p.evaluate(() => __focusCalls);
+  assert.deepEqual(calls, [
+    ['pomodoro', { task: { source: 'crisp-tempo', id: 'task-1', title: 'Primary Task' } }],
+    ['single', undefined, { task: { source: 'crisp-tempo', id: 'task-1', title: 'Primary Task' } }],
+  ]);
+
+  await p.evaluate(async () => {
+    const s = tempoAudit.store.TempoStore.get(plugin);
+    await s.recordFocusEntry('task-1', { id: 'a', startedAt: 1, endedAt: 2, minutes: 50, completed: true, pomodoro: true });
+    await s.recordFocusEntry('task-1', { id: 'b', startedAt: 3, endedAt: 4, minutes: 12, completed: false, pomodoro: false });
+    s.setActiveFocus({ taskId: 'task-1', state: 'running' });
+  });
+  await p.locator('.tempo-focus-state').waitFor();
+  assert.equal(await p.locator('.tempo-focus-total').textContent(), '累计 1 小时 2 分');
+  assert.ok((await section.textContent()).includes('完成 1 段 · 中断 1 段'));
+  assert.equal(await p.locator('.tempo-focus-state').textContent(), '专注中');
+  assert.equal(await section.getByRole('button', { name: '开始番茄' }).count(), 0, '正在专注这个任务时不再给开始按钮');
+  await section.getByRole('button', { name: '打开番茄钟' }).click();
+  assert.equal(await p.evaluate(() => window.__timerOpened), true);
+  assert.equal(await p.evaluate(() => fixture.disk.focusLog['task-1'].length), 2, 'saved to data.json');
+
+  await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).setActiveFocus({ taskId: 'task-3', state: 'paused' }));
+  await p.waitForFunction(() => document.querySelector('.tempo-focus-section')?.textContent.includes('另一个任务'));
+  assert.equal(await section.getByRole('button', { name: '开始番茄' }).count(), 1);
+
+  const inspector = await p.locator('.tempo-inspector-card').evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
+  assert.ok(inspector.sw <= inspector.cw, `inspector overflows: ${JSON.stringify(inspector)}`);
+
+  await p.evaluate(() => { __focus.startPomodoro = async () => { throw new Error('boom'); }; });
+  await section.getByRole('button', { name: '开始番茄' }).click();
+  await p.waitForFunction(() => (window.__tempoNotices || []).some((n) => n.includes('没能开始专注：boom')));
+
+  await p.evaluate(() => { __focus.focusApiVersion = 1; tempoAudit.store.TempoStore.get(plugin).notify(); });
+  await p.waitForFunction(() => document.querySelector('.tempo-focus-section')?.textContent.includes('1.7.0'));
+  assert.equal(await section.getByRole('button', { name: '开始番茄' }).count(), 0, '旧版 Focus 不给开始按钮');
+
+  await p.evaluate(() => { plugin.app.plugins = { plugins: {}, enabledPlugins: new Set() }; });
+  await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).revealTask('task-3'));
+  await p.waitForFunction(() => document.querySelector('.tempo-inspector-title-input')?.value === 'Plain Task');
+  assert.equal(await p.locator('.tempo-focus-section').count(), 0, '没装 Focus、也没有记录时不显示');
+  await close(p);
+  return { started: calls.length, total: '1h2m', states: ['running', 'elsewhere', 'outdated', 'hidden'], inspector };
+});
+
 await scenario('r5_slow_save_still_reports_progress', async () => {
   const p = await boot({ adapter: true, adapterRaw: 'fixture' });
   await p.evaluate(() => {

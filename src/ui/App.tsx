@@ -21,6 +21,7 @@ import { TempoStore } from "../core/store";
 import type { Cycle, Project, Task, TaskPriority, TaskStatus, TodoDatabase } from "../core/types";
 import { getTodayString } from "../services/date-service";
 import { t, tf, type LanguageSetting, type Locale } from "../services/i18n";
+import { focusPluginStatus, startFocusForTask } from "../services/focus-bridge";
 import { CycleModal } from "./commands/CycleModal";
 import { MobileNavModal } from "./commands/MobileNavModal";
 import { ProjectModal } from "./commands/ProjectModal";
@@ -56,6 +57,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
     saveStatus: store.saveStatus,
     saveError: store.saveError,
     data: store.data,
+    activeFocus: store.activeFocus,
   });
 
   const [storeState, setStoreState] = useState(snapshot);
@@ -969,6 +971,17 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               canAddSubtask={storeState.data.licenseStatus === "valid"}
               onRequestLicense={promptForLicense}
               onOpenSource={(notePath) => void plugin.app.workspace.openLinkText(notePath, "", false)}
+              focus={{
+                status: focusPluginStatus(plugin.app).status,
+                entries: storeState.data.focusLog?.[selectedTask.id],
+                active: storeState.activeFocus,
+                onStart: (mode) => {
+                  startFocusForTask(plugin.app, selectedTask, mode).catch((err) => {
+                    new Notice(tf("focusStartFailed", locale, { reason: err instanceof Error ? err.message : String(err) }));
+                  });
+                },
+                onOpenTimer: () => focusPluginStatus(plugin.app).plugin?.openPomodoroModal?.(),
+              }}
             />
           )}
         </div>

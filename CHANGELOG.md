@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.6.0] - 2026-10-21
+
+### Added
+- 新增 `getCompletedToday()` 供其他插件读取今天完成的任务数（与「今天已完成」同一口径，含子任务）。Crisp Pulse 1.29.0 用它在任务完成时于看板湖面升起一盏孔明灯。
+
 ## [0.5.0] - 2026-10-21
 
 ### Added

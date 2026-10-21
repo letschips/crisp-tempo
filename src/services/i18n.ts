@@ -1,46 +1,66 @@
 import * as obsidian from "obsidian";
+import { toHant } from "./hant";
 
 export type Locale = "zh" | "en";
 /** What the user chose in settings: follow Obsidian's interface language, or pin one. */
 export type LanguageSetting = "auto" | Locale;
 
-/** Obsidian's interface language: Chinese (incl. Traditional) → zh, anything else → en.
-    Falls back to the stored `language` for older builds; zh when neither is available (tests). */
-export function detectObsidianLocale(): Locale {
-  let lang: string | null = null;
+/** Obsidian's interface language as reported, or null when it can't be read (tests).
+    Falls back to the stored `language` for older builds. */
+function obsidianLanguage(): string | null {
   try {
     const getLanguage = (obsidian as { getLanguage?: () => string }).getLanguage;
-    if (typeof getLanguage === "function") lang = String(getLanguage() || "en");
+    if (typeof getLanguage === "function") return String(getLanguage() || "en");
   } catch {
     /* fall through */
   }
-  if (lang === null) {
-    try {
-      const storage = typeof window !== "undefined" ? window.localStorage : null;
-      if (storage) lang = storage.getItem("language") || "en";
-    } catch {
-      /* storage blocked */
-    }
+  try {
+    const storage = typeof window !== "undefined" ? window.localStorage : null;
+    if (storage) return storage.getItem("language") || "en";
+  } catch {
+    /* storage blocked */
   }
+  return null;
+}
+
+/** Obsidian's interface language: Chinese (incl. Traditional) → zh, anything else → en; zh when unknown (tests). */
+export function detectObsidianLocale(): Locale {
+  const lang = obsidianLanguage();
   if (lang === null) return "zh";
   return /^zh\b/i.test(lang) ? "zh" : "en";
+}
+
+/** Obsidian is set to Traditional Chinese (繁體中文 is zh-TW; system fallbacks may give zh-HK / zh-Hant-*). */
+export function detectObsidianHant(): boolean {
+  return /^zh[-_](tw|hk|mo|hant)\b/i.test(obsidianLanguage() ?? "");
 }
 
 export function resolveLocale(setting: LanguageSetting): Locale {
   return setting === "auto" ? detectObsidianLocale() : setting;
 }
 
+/** Traditional script only when following Obsidian; pinning 简体中文 keeps Simplified. */
+export function resolveHant(setting: LanguageSetting): boolean {
+  return setting === "auto" && detectObsidianHant();
+}
+
 // The resolved locale for code that has no store at hand (licence messages). Kept in sync by the store.
 let activeLocale: Locale | null = null;
-export function setActiveLocale(locale: Locale): void {
+let activeHant: boolean | null = null;
+export function setActiveLocale(locale: Locale, hant = false): void {
   activeLocale = locale;
+  activeHant = locale === "zh" && hant;
 }
 export function getActiveLocale(): Locale {
   return activeLocale ?? detectObsidianLocale();
 }
+/** Chinese text in the active script: Traditional when following a 繁體中文 Obsidian, else unchanged. */
+export function zhText(text: string): string {
+  return (activeHant ?? detectObsidianHant()) ? toHant(text) : text;
+}
 /** Inline pair for messages outside the dictionary: zh text, en text. */
 export function lt(zh: string, en: string): string {
-  return getActiveLocale() === "zh" ? zh : en;
+  return getActiveLocale() === "zh" ? zhText(zh) : en;
 }
 
 export const translations = {
@@ -445,7 +465,8 @@ export const translations = {
 export type TranslationKey = keyof typeof translations["en"];
 
 export function t(key: TranslationKey, locale: Locale): string {
-  return translations[locale]?.[key] || translations["zh"][key] || key;
+  const text = translations[locale]?.[key] || translations["zh"][key] || key;
+  return locale === "zh" ? zhText(text) : text;
 }
 
 /** Same as `t`, with `{name}` placeholders replaced from `params`.

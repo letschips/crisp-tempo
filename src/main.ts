@@ -1,7 +1,8 @@
 import { Plugin, PluginSettingTab, Setting, Notice, addIcon, type App, type WorkspaceLeaf } from "obsidian";
 import { TempoStore } from "./core/store";
 import { TempoView, TEMPO_VIEW_TYPE } from "./views/TempoView";
-import { detectObsidianLocale, lt, t, tf, type LanguageSetting } from "./services/i18n";
+import { detectObsidianHant, detectObsidianLocale, lt, t, tf, zhText, type LanguageSetting } from "./services/i18n";
+import { toHant } from "./services/hant";
 import { getTodayString } from "./services/date-service";
 import {
   findSourceTask,
@@ -55,9 +56,10 @@ export default class CrispTempoPlugin extends Plugin {
     // Obsidian Commands: names are fixed at registration (before Tempo's data loads), so they follow
     // Obsidian's interface language like the rest of the command palette.
     const commandLocale = detectObsidianLocale();
+    const commandZh = (text: string) => (detectObsidianHant() ? toHant(text) : text);
     this.addCommand({
       id: "open-tempo-view",
-      name: commandLocale === "zh" ? "打开任务看板" : "Open Tempo Task Manager",
+      name: commandLocale === "zh" ? commandZh("打开任务看板") : "Open Tempo Task Manager",
       callback: () => {
         void this.activateView();
       },
@@ -65,7 +67,7 @@ export default class CrispTempoPlugin extends Plugin {
 
     this.addCommand({
       id: "quick-add-task",
-      name: commandLocale === "zh" ? "快速新建任务" : "Quick Add Task",
+      name: commandLocale === "zh" ? commandZh("快速新建任务") : "Quick Add Task",
       callback: async () => {
         const leaf = await this.activateView();
         if (leaf) TempoStore.get(this).openQuickAdd(leaf);
@@ -231,11 +233,11 @@ class CrispTempoSettingTab extends PluginSettingTab {
 
     // 0. Quick Open View Action
     new Setting(containerEl)
-      .setName(locale === "en" ? "Open Tempo Workspace" : "打开 Crisp Tempo 任务看板")
-      .setDesc(locale === "en" ? "Open the full Tempo task manager in a new tab." : "在工作区新标签页中打开 Tempo 全功能交互面板。")
+      .setName(locale === "en" ? "Open Tempo Workspace" : zhText("打开 Crisp Tempo 任务看板"))
+      .setDesc(locale === "en" ? "Open the full Tempo task manager in a new tab." : zhText("在工作区新标签页中打开 Tempo 全功能交互面板。"))
       .addButton((btn) => {
         btn
-          .setButtonText(locale === "en" ? "Open Board" : "打开看板")
+          .setButtonText(locale === "en" ? "Open Board" : zhText("打开看板"))
           .setCta()
           .onClick(async () => {
             (this.app as any).setting?.close?.();

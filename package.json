@@ -1,6 +1,6 @@
 {
   "name": "crisp-tempo",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Things 3 × Linear independent personal task manager for Obsidian.",
   "main": "main.js",
   "type": "module",
@@ -8,6 +8,7 @@
     "dev": "node esbuild.config.mjs",
     "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
     "test": "node --test tests/license.test.mjs tests/store-license.test.mjs tests/locale.test.mjs tests/focus.test.mjs",
+    "hant": "node scripts/gen-hant.cjs",
     "test:e2e": "node tests/e2e/app.e2e.mjs",
     "deploy": "node scripts/deploy.mjs",
     "check": "npm run build && npm test && npm run test:e2e"
@@ -31,6 +32,7 @@
     "builtin-modules": "^5.3.0",
     "esbuild": "^0.25.0",
     "obsidian": "^1.13.1",
+    "opencc-js": "1.0.5",
     "playwright-core": "1.63.0",
     "typescript": "^5.7.3"
   },

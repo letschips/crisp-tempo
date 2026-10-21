@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.5.0] - 2026-10-21
+
+### Added
+- 支持繁体中文：Obsidian 设为繁體中文且语言选「跟随 Obsidian」时，界面显示繁体，用台湾用语。
+
 ## [0.4.0] - 2026-10-20
 
 ### Added

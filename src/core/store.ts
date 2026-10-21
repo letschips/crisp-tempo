@@ -1,6 +1,6 @@
 import { normalizePath, type DataAdapter, type Plugin, type Stat, type WorkspaceLeaf } from "obsidian";
 import { createEmptyDatabase } from "./mock-data";
-import { lt, resolveLocale, setActiveLocale, type LanguageSetting, type Locale } from "../services/i18n";
+import { lt, resolveHant, resolveLocale, setActiveLocale, type LanguageSetting, type Locale } from "../services/i18n";
 import type { Area, Cycle, Label, Project, Task, TodoDatabase } from "./types";
 import type { LicensePayload, LicenseVerifyResult } from "../services/license";
 import { inheritVaultCrispLicense, verifyLicenseCode } from "../services/license";
@@ -422,7 +422,7 @@ export class TempoStore {
 
     if (raw.kind === "missing") {
       const locale = resolveLocale("auto");
-      setActiveLocale(locale);
+      setActiveLocale(locale, resolveHant("auto"));
       const initial: TempoPluginData = {
         schemaVersion: 1,
         locale,
@@ -454,7 +454,7 @@ export class TempoStore {
         ? record.language
         : record.locale === "en" ? "en" : "auto";
     this.loadLocale = resolveLocale(language);
-    setActiveLocale(this.loadLocale);
+    setActiveLocale(this.loadLocale, resolveHant(language));
     const validation = validateDatabase(record.database, { salvage });
     this.loadProblems = validation.problems;
 
@@ -820,7 +820,7 @@ export class TempoStore {
   public setLanguage(language: LanguageSetting): void {
     if (!this.data) return;
     const locale = resolveLocale(language);
-    setActiveLocale(locale);
+    setActiveLocale(locale, resolveHant(language));
     this.data = { ...this.data, language, locale };
     this.notify();
     this.saveDebounced();

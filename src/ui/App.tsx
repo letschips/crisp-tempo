@@ -910,19 +910,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
                   : t(activeNav as any, locale) || activeNav.toUpperCase()
               }
               subtitle={
-                activeNav === "inbox"
-                  ? t("inboxSubtitle", locale)
-                  : activeNav === "upcoming"
-                  ? t("upcomingSubtitle", locale)
-                  : activeNav === "anytime"
-                  ? t("anytimeSubtitle", locale)
-                  : activeNav === "someday"
-                  ? t("somedaySubtitle", locale)
-                  : activeNav === "waiting"
-                  ? t("waitingSubtitle", locale)
-                  : activeNav === "completed"
-                  ? t("completedLog", locale)
-                  : activeNav.startsWith("proj:")
+                activeNav.startsWith("proj:")
                   ? db.projects[activeNav.replace("proj:", "")]?.description || ""
                   : activeNav.startsWith("cycle:")
                   ? `${db.cycles[activeNav.replace("cycle:", "")]?.startDate || ""} ~ ${

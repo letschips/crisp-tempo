@@ -64,7 +64,6 @@ export function TodayView({
           <div className="tempo-empty-state">
             <TodayIcon size={36} className="tempo-empty-icon" />
             <p style={{ margin: 0, fontWeight: 500 }}>{t("noTasksToday", locale)}</p>
-            <p style={{ margin: 0, fontSize: 12 }}>{t("noTasksDesc", locale)}</p>
           </div>
         ) : (
           <>

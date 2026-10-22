@@ -109,7 +109,6 @@ export function Header({
           </div>
           <h1 className="tempo-title">
             <span>{t("appName", locale)}</span>
-            <span className="tempo-subtitle">{t("appSubtitle", locale)}</span>
           </h1>
         </div>
 

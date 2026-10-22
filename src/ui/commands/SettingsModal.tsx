@@ -187,7 +187,6 @@ export function SettingsModal({
             <div className="tempo-settings-item">
               <div className="tempo-settings-label-group">
                 <span className="tempo-settings-item-title">{t("language", locale)}</span>
-                <span className="tempo-settings-item-desc">{t("languageDesc", locale)}</span>
               </div>
               <div className="tempo-segmented-control">
                 <button
@@ -218,7 +217,6 @@ export function SettingsModal({
             <div className="tempo-settings-item" style={{ marginTop: 12 }}>
               <div className="tempo-settings-label-group">
                 <span className="tempo-settings-item-title">{t("defaultDestination", locale)}</span>
-                <span className="tempo-settings-item-desc">{t("defaultDestDesc", locale)}</span>
               </div>
               <div className="tempo-segmented-control">
                 <button
@@ -420,11 +418,6 @@ export function SettingsModal({
             <div className="tempo-settings-item" style={{ marginTop: 14 }}>
               <div className="tempo-settings-label-group">
                 <span className="tempo-settings-item-title">{t("exportData", locale)}</span>
-                <span className="tempo-settings-item-desc">
-                  {exportFolderDraft.trim()
-                    ? tf("exportDestInfo", locale, { path: exportFolderDraft.trim() })
-                    : t("exportRootInfo", locale)}
-                </span>
               </div>
               <button
                 type="button"

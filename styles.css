@@ -212,12 +212,6 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   gap: 8px;
 }
 
-.tempo-subtitle {
-  font-size: 12px;
-  color: var(--text-muted);
-  font-weight: 400;
-}
-
 /* Navigation Pills (Crisp Pulse Tab Buttons) */
 .tempo-nav-pills {
   display: flex;
@@ -400,16 +394,6 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   font-variant-numeric: tabular-nums;
   color: var(--text-normal);
   margin: 0;
-}
-
-.tempo-kpi-sub {
-  font-size: 10px;
-  color: var(--text-faint);
-  font-weight: 400;
-  margin: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* ==========================================================================
@@ -2142,7 +2126,6 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   .tempo-header-top { flex-wrap: wrap; gap: 8px; }
   .tempo-title-group { flex: 1 0 100%; }
   .tempo-title { white-space: nowrap; }
-  .tempo-subtitle { display: none; }
   .tempo-header-actions { width: 100%; justify-content: flex-end; gap: 6px; }
   .tempo-header-actions .tempo-action-btn span { display: none; }
 }
@@ -2150,7 +2133,6 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   .tempo-header-top { flex-wrap: wrap; gap: 8px; }
   .tempo-title-group { flex: 1 0 100%; }
   .tempo-title { white-space: nowrap; }
-  .tempo-subtitle { display: none; }
   .tempo-header-actions { width: 100%; justify-content: flex-end; gap: 6px; }
   .tempo-header-actions .tempo-action-btn span { display: none; }
 }
@@ -2288,15 +2270,6 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
 }
 
 /* --- Crisp Tempo Setting Tab & About Card --- */
-.tempo-settings-tab-subhead {
-  color: var(--text-muted);
-  font-size: 0.88rem;
-  padding: 0 var(--size-4-4, 16px);
-  margin-top: -0.4rem;
-  margin-bottom: 1.2rem;
-  font-style: italic;
-}
-
 /* Ensure consistent sans-serif interface typography across all inputs & placeholders */
 .vertical-tab-content .setting-item-control input[type="text"],
 .vertical-tab-content .setting-item-control input[type="password"],

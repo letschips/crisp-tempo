@@ -11,8 +11,7 @@ interface KpiRowProps {
 
 export function KpiRow({ stats, locale, activeNav, onSelectNav }: KpiRowProps): JSX.Element {
   // `highlight` is deliberately separate from `nav`: two cards may share a destination, but
-  // only the card that represents that destination is marked active. The completed card
-  // counts today only while its destination is the full archive, so its subtitle says so.
+  // only the card that represents that destination is marked active.
   const kpis = [
     {
       key: "today",
@@ -20,7 +19,6 @@ export function KpiRow({ stats, locale, activeNav, onSelectNav }: KpiRowProps): 
       highlight: "today",
       label: t("todayKpi", locale),
       val: tf("taskCount", locale, { n: stats.todayRemaining }),
-      sub: t("today", locale),
     },
     {
       key: "in-progress",
@@ -28,7 +26,6 @@ export function KpiRow({ stats, locale, activeNav, onSelectNav }: KpiRowProps): 
       highlight: null,
       label: t("inProgressKpi", locale),
       val: tf("taskCount", locale, { n: stats.inProgress }),
-      sub: t("inProgress", locale),
     },
     {
       key: "inbox",
@@ -36,7 +33,6 @@ export function KpiRow({ stats, locale, activeNav, onSelectNav }: KpiRowProps): 
       highlight: "inbox",
       label: t("inboxKpi", locale),
       val: tf("taskCount", locale, { n: stats.inbox }),
-      sub: t("inboxSubtitle", locale),
     },
     {
       key: "done-today",
@@ -44,7 +40,6 @@ export function KpiRow({ stats, locale, activeNav, onSelectNav }: KpiRowProps): 
       highlight: "completed",
       label: t("doneKpi", locale),
       val: tf("taskCount", locale, { n: stats.todayDone }),
-      sub: t("completedLog", locale),
     },
   ];
 
@@ -66,7 +61,6 @@ export function KpiRow({ stats, locale, activeNav, onSelectNav }: KpiRowProps): 
         >
           <div className="tempo-kpi-label">{kpi.label}</div>
           <div className="tempo-kpi-val">{kpi.val}</div>
-          <div className="tempo-kpi-sub">{kpi.sub}</div>
         </div>
       ))}
     </div>

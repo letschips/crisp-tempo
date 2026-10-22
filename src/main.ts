@@ -238,15 +238,10 @@ class CrispTempoSettingTab extends PluginSettingTab {
 
     const headerEl = containerEl.createDiv({ cls: "tempo-settings-tab-header" });
     headerEl.createEl("h2", { text: `Crisp Tempo (v${this.plugin.manifest.version})` });
-    containerEl.createEl("p", {
-      text: "Tasks, in motion.",
-      cls: "tempo-settings-tab-subhead",
-    });
 
     // 0. Quick Open View Action
     new Setting(containerEl)
       .setName(locale === "en" ? "Open Tempo Workspace" : zhText("打开 Crisp Tempo 任务看板"))
-      .setDesc(locale === "en" ? "Open the full Tempo task manager in a new tab." : zhText("在工作区新标签页中打开 Tempo 全功能交互面板。"))
       .addButton((btn) => {
         btn
           .setButtonText(locale === "en" ? "Open Board" : zhText("打开看板"))
@@ -281,7 +276,7 @@ class CrispTempoSettingTab extends PluginSettingTab {
           });
       });
     } else {
-      statusSetting.setDesc(`❌ ${t("licenseUnlicensed", locale)}（${t("licenseDesc", locale)}）`);
+      statusSetting.setDesc(`❌ ${t("licenseUnlicensed", locale)}`);
     }
 
     new Setting(containerEl)
@@ -330,7 +325,6 @@ class CrispTempoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName(t("language", locale))
-      .setDesc(t("languageDesc", locale))
       .addDropdown((dd) => {
         dd.addOption("auto", t("languageAuto", locale))
           .addOption("zh", t("languageZh", locale))
@@ -344,7 +338,6 @@ class CrispTempoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName(t("defaultDestination", locale))
-      .setDesc(t("defaultDestDesc", locale))
       .addDropdown((dd) => {
         dd.addOption("inbox", t("inbox", locale))
           .addOption("today", t("today", locale))
@@ -371,11 +364,6 @@ class CrispTempoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName(t("exportData", locale))
-      .setDesc(
-        data?.exportFolder
-          ? tf("exportDestInfo", locale, { path: data.exportFolder })
-          : t("exportRootInfo", locale)
-      )
       .addButton((btn) => {
         btn
           .setButtonText(t("exportData", locale))

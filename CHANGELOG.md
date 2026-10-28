@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.8.0] - 2026-10-28
+
+### Added
+- 配合 Crisp Focus 1.9.0：Tempo 停用、重载或保存失败时结束的专注，启动时和下一段专注结束后按 Focus 的会话日志补记到任务上，同一段只记一次。
+
 ## [0.7.0] - 2026-10-28
 
 ### Added

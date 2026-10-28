@@ -930,16 +930,30 @@ export class TempoStore {
    * session was already recorded. Not part of undo: the time was spent whatever is undone later.
    */
   public async recordFocusEntry(taskId: string, entry: FocusEntry): Promise<boolean> {
+    return (await this.recordFocusEntries([{ taskId, entry }])) > 0;
+  }
+
+  /**
+   * Records several sessions (catching up from Crisp Focus's session log) in one save and resolves
+   * with how many were new. Sessions already recorded are skipped, so catching up twice adds nothing.
+   */
+  public async recordFocusEntries(items: readonly { taskId: string; entry: FocusEntry }[]): Promise<number> {
     if (this.status !== "ready" || !this.data) throw new Error(lt("Crisp Tempo 数据未加载，专注记录没有保存", "Crisp Tempo data is not loaded; the focus session was not saved"));
     const log = this.focusLog;
-    const next = addFocusEntry(log, taskId, entry);
-    if (next === log) return false;
+    let next = log;
+    let added = 0;
+    for (const { taskId, entry } of items) {
+      const after = addFocusEntry(next, taskId, entry);
+      if (after !== next) added++;
+      next = after;
+    }
+    if (added === 0) return 0;
     this.data = { ...this.data, focusLog: next };
     this.notify();
     this.saveDebounced(50);
     await this.flush();
     if (this.hasPendingSave) throw new Error(lt(`Crisp Tempo 保存失败：${this.saveError ?? "未知原因"}`, `Crisp Tempo failed to save: ${this.saveError ?? "unknown reason"}`));
-    return true;
+    return added;
   }
 
   public get activeFocus(): ActiveFocus | null {

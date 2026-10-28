@@ -81,6 +81,30 @@ export function focusEntryFromEvent(event: unknown): { taskId: string; entry: Fo
   };
 }
 
+/**
+ * The sessions Crisp Focus 1.9.0+ (focusApiVersion 3) logged when they ended, oldest first, or null
+ * when Focus is missing, older or fails. Read on start and after each ending, so a session that ended
+ * while Tempo was off or could not save is still recorded; entries are deduplicated by session id.
+ */
+export function focusSessionLog(app: App): unknown[] | null {
+  const plugins = (app as unknown as { plugins?: { plugins?: Record<string, unknown>; enabledPlugins?: Set<string> } }).plugins;
+  const plugin = plugins?.plugins?.[FOCUS_ID] as { focusApiVersion?: number; getSessionLog?: () => unknown } | undefined;
+  if (!plugin || (plugins?.enabledPlugins && !plugins.enabledPlugins.has(FOCUS_ID))) return null;
+  if (!(Number(plugin.focusApiVersion) >= 3) || typeof plugin.getSessionLog !== "function") return null;
+  try {
+    const log = plugin.getSessionLog();
+    return isObject(log) && Array.isArray(log.sessions) ? log.sessions : null;
+  } catch (err) {
+    console.debug("Crisp Tempo: could not read the Crisp Focus session log", err);
+    return null;
+  }
+}
+
+/** The task entries in a Focus session log, by the same rules as live session events. */
+export function entriesFromSessionLog(sessions: readonly unknown[]): { taskId: string; entry: FocusEntry }[] {
+  return sessions.map(focusEntryFromEvent).filter((item): item is { taskId: string; entry: FocusEntry } => item !== null);
+}
+
 /** Returns the log with the entry added, or the same log when this session is already there. */
 export function addFocusEntry(log: FocusLog, taskId: string, entry: FocusEntry): FocusLog {
   const list = log[taskId] ?? [];

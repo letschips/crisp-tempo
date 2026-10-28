@@ -34,7 +34,7 @@ await esbuild.build({
 globalThis.window = { app: { appId: "test-device" } };
 const {
   TempoStore, createEmptyDatabase, focusEntryFromEvent, addFocusEntry, cleanFocusLog, summarizeFocus,
-  activeFocusFromSnapshot, focusPluginStatus, startFocusForTask,
+  activeFocusFromSnapshot, focusPluginStatus, startFocusForTask, focusSessionLog, entriesFromSessionLog,
 } = await import(pathToFileURL(path.join(outDir, "focus.mjs")).href);
 
 const TASK = { source: "crisp-tempo", id: "task-1", title: "修复转写回链" };
@@ -132,10 +132,11 @@ function setup(extra = {}) {
   const db = createEmptyDatabase();
   db.tasks["task-1"] = { id: "task-1", title: "修复转写回链", status: "todo", triage: "processed", availability: "anytime", priority: "none", createdAt: 1, updatedAt: 1, order: "a" };
   const files = { [TEMPO_DATA]: JSON.stringify({ schemaVersion: 1, locale: "zh", language: "zh", database: db, ...extra }) };
+  const io = { failWrites: false };
   const adapter = {
     exists: async (p) => p in files || p === ".obsidian/plugins/crisp-tempo",
     read: async (p) => { if (!(p in files)) throw new Error(`ENOENT ${p}`); return files[p]; },
-    write: async (p, text) => { files[p] = text; },
+    write: async (p, text) => { if (io.failWrites && p === TEMPO_DATA) throw new Error("disk full"); files[p] = text; },
     stat: async (p) => (p in files ? { size: Buffer.byteLength(files[p]) } : null),
     list: async () => ({ files: Object.keys(files), folders: [] }),
     remove: async (p) => { delete files[p]; },
@@ -146,7 +147,7 @@ function setup(extra = {}) {
     loadData: async () => JSON.parse(files[TEMPO_DATA]),
     saveData: async (data) => { files[TEMPO_DATA] = JSON.stringify(data); },
   };
-  return { store: new TempoStore(plugin), saved: () => JSON.parse(files[TEMPO_DATA]) };
+  return { store: new TempoStore(plugin), saved: () => JSON.parse(files[TEMPO_DATA]), io, plugin };
 }
 
 test("recorded focus time is saved, outlives an undo and is read back on reload", async () => {
@@ -186,4 +187,49 @@ test("the running task is runtime state: it notifies views but is never saved", 
   store.setDefaultDest("today");
   await store.flush();
   assert.equal(saved().activeFocus, undefined);
+});
+
+/* Catching up from Crisp Focus's session log (Focus 1.9.0, focusApiVersion 3). Failure modes:
+   - a session that ended while Tempo was off, reloading or failing to save is never recorded;
+   - catching up records a session twice, or records breaks, misclicks and other plugins' sessions;
+   - an older Focus, or one whose log throws, breaks Tempo instead of being skipped. */
+test("the session log is read only from Focus API 3, and a failing Focus is skipped", () => {
+  const app = (plugin) => ({ plugins: { plugins: { "crisp-focus": plugin }, enabledPlugins: new Set(["crisp-focus"]) } });
+  assert.equal(focusSessionLog(app({ focusApiVersion: 2, getSessionLog: () => ({ sessions: [event()] }) })), null);
+  assert.equal(focusSessionLog(app({ focusApiVersion: 3, getSessionLog: () => { throw new Error("reloading"); } })), null);
+  assert.equal(focusSessionLog(app({ focusApiVersion: 3, getSessionLog: () => ({ sessions: "nope" }) })), null);
+  assert.equal(focusSessionLog({ plugins: { plugins: {}, enabledPlugins: new Set() } }), null);
+  assert.deepEqual(focusSessionLog(app({ focusApiVersion: 3, getSessionLog: () => ({ apiVersion: 3, sessions: [event({ seq: 1 })] }) })), [event({ seq: 1 })]);
+});
+
+test("sessions Tempo missed are recorded from Focus's log once, in one save", async () => {
+  const { store, saved } = setup();
+  await store.load();
+  const live = focusEntryFromEvent(event({ apiVersion: 3, id: "s-1", seq: 1 }));
+  await store.recordFocusEntry(live.taskId, live.entry);
+  const log = [
+    event({ apiVersion: 3, id: "s-1", seq: 1 }),
+    event({ apiVersion: 3, id: "s-2", seq: 2, type: "stop", completed: false, elapsedMs: 9 * 60000 }),
+    event({ apiVersion: 3, id: "s-3", seq: 3, task: { source: "other-plugin", id: "x", title: "x" } }),
+    event({ apiVersion: 3, id: "s-4", seq: 4, kind: "break" }),
+    event({ apiVersion: 3, id: "s-5", seq: 5, task: null }),
+  ];
+  const items = entriesFromSessionLog(log);
+  assert.deepEqual(items.map((i) => i.entry.id), ["s-1", "s-2"]);
+  assert.equal(await store.recordFocusEntries(items), 1, "only the missed session is new");
+  assert.equal(await store.recordFocusEntries(items), 0, "catching up again adds nothing");
+  assert.deepEqual(saved().focusLog["task-1"].map((e) => [e.id, e.minutes]), [["s-1", 25], ["s-2", 9]]);
+});
+
+test("a catch-up that fails to save throws, and the next start records it again", async () => {
+  const { store, io, plugin } = setup();
+  await store.load();
+  io.failWrites = true;
+  const items = entriesFromSessionLog([event({ apiVersion: 3, id: "s-9", seq: 9 })]);
+  await assert.rejects(store.recordFocusEntries(items), /保存失败|failed to save/);
+  io.failWrites = false;
+  const fresh = new TempoStore(plugin);
+  await fresh.load();
+  assert.equal(fresh.focusLog["task-1"], undefined, "nothing reached the disk");
+  assert.equal(await fresh.recordFocusEntries(items), 1);
 });

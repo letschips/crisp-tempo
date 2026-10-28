@@ -17,7 +17,7 @@ import { lt } from "./i18n";
 
 /** Reminders changes are picked up this often, and when Obsidian comes back to the front. */
 const SYNC_INTERVAL_MS = 5 * 60_000;
-const FOCUS_MIN_GAP_MS = 60_000;
+const FOCUS_MIN_GAP_MS = 10_000;
 /** A Tempo edit to a linked task is written to Reminders this long after the last keystroke. */
 const CHANGE_DELAY_MS = 2_000;
 
@@ -189,6 +189,8 @@ export class AppleSyncController {
           fetched,
           now,
           canImport: !!apple.remindersEnabled && store.data?.licenseStatus === "valid",
+          dest: store.data?.defaultDest === "today" ? "today" : "inbox",
+          today: getTodayString(),
           newTaskId: () => `task-${now}-${Math.random().toString(36).substring(2, 6)}`,
         });
         updates = plan.updates;

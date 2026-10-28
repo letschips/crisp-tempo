@@ -165,6 +165,9 @@ test("open reminders in chosen lists are imported once, also from a second Mac a
   assert.equal(created.description, "工行");
   assert.equal(created.dueDate, "2026-10-28");
   assert.equal(created.triage, "processed", "due today, so it shows in Today");
+  const undated = plan({ links: {}, reminders: [reminder({ id: "R5", externalId: "EXT-5", due: null })] });
+  assert.equal(Object.values(undated.db.tasks).find((t) => t.sourceId === "apple-reminders:EXT-5").triage, "inbox",
+    "no due day: lands in the inbox like any new task, not out of sight in Anytime");
   assert.equal(created.sourceId, "apple-reminders:EXT-2");
   assert.equal(result.links[created.id].externalId, "EXT-2");
 
@@ -174,6 +177,22 @@ test("open reminders in chosen lists are imported once, also from a second Mac a
   // Links lost in a merge, but the task with its source survived.
   const noLink = plan({ reminders: [fresh], links: {}, tasks: Object.values(result.db.tasks) });
   assert.equal(noLink.imported, 0);
+});
+
+test("without a due day an import follows Tempo's default destination", () => {
+  const r = reminder({ id: "R6", externalId: "EXT-6", due: null });
+  const today = planReminderSync({
+    db: db([]), links: {}, fetched: { reminders: [r], items: [], missing: [] },
+    now: T0, canImport: true, newTaskId: () => "x", dest: "today", today: "2026-10-28",
+  }).db.tasks.x;
+  assert.equal(today.triage, "processed");
+  assert.equal(today.focusDate, "2026-10-28");
+  const future = planReminderSync({
+    db: db([]), links: {}, fetched: { reminders: [reminder({ id: "R7", externalId: "EXT-7", due: "2026-11-30" })], items: [], missing: [] },
+    now: T0, canImport: true, newTaskId: () => "y", dest: "inbox",
+  }).db.tasks.y;
+  assert.equal(future.triage, "processed", "a dated reminder is placed by its date (Upcoming)");
+  assert.equal(future.focusDate, undefined);
 });
 
 test("nothing is imported without a licence, but linked tasks still sync", () => {

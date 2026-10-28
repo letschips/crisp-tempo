@@ -2,6 +2,12 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.11.2] - 2026-10-28
+
+### Fixed
+- 没有截止日期的提醒导入后放进「默认目的地」（收集箱或今天），不再直接进「随时可做」看不到。
+- 在提醒事项里加完切回 Obsidian 就会同步（原先距上次同步不到 1 分钟时要等下一轮）。
+
 ## [0.11.1] - 2026-10-28
 
 ### Fixed

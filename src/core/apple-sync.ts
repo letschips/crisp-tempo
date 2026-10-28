@@ -198,6 +198,8 @@ export function newLink(reminder: AppleReminder, values: Shared): ReminderLink {
  * Compares Tempo with what the helper fetched. Changes from Reminders are applied to the returned
  * database (and their links); Tempo changes are returned as updates to write. Open reminders in the
  * chosen lists that no link knows become tasks when `canImport` (creating tasks needs a licence).
+ * A reminder with a due day is placed by that day (Today once it is due, Upcoming before); one
+ * without goes where Tempo puts new tasks (`dest`), like a quick-added task or a Pulse memo.
  */
 export function planReminderSync(input: {
   db: TodoDatabase;
@@ -206,6 +208,10 @@ export function planReminderSync(input: {
   now: number;
   canImport: boolean;
   newTaskId: () => string;
+  /** Tempo's default destination for new tasks; defaults to the inbox. */
+  dest?: "inbox" | "today";
+  /** YYYY-MM-DD, for `dest` "today". */
+  today?: string;
 }): ReminderSyncPlan {
   const { now } = input;
   const tasks = { ...input.db.tasks };
@@ -303,10 +309,11 @@ export function planReminderSync(input: {
         title: values.title,
         ...(values.notes ? { description: values.notes } : {}),
         status: "todo",
-        triage: "processed",
+        triage: values.due || input.dest === "today" ? "processed" : "inbox",
         availability: "anytime",
         priority: "none",
         ...(values.due ? { dueDate: values.due } : {}),
+        ...(!values.due && input.dest === "today" && input.today ? { focusDate: input.today } : {}),
         sourceId,
         createdAt: now,
         updatedAt: now,

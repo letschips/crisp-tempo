@@ -14,6 +14,8 @@ export interface TempoPluginData {
   language?: LanguageSetting;
   defaultDest?: "inbox" | "today";
   exportFolder?: string;
+  /** Minutes the user has for planned work each day; unset means no budget is shown. */
+  dailyCapacityMinutes?: number;
   licenseKey?: string;
   licenseStatus?: "valid" | "invalid" | "unlicensed";
   licensePayload?: LicensePayload;
@@ -76,6 +78,16 @@ function optionalTimestampProblem(value: unknown, field: string): string | null 
   return typeof value === "number" && Number.isFinite(value) ? null : `${field} is not a number`;
 }
 
+function optionalMinutesProblem(value: unknown, field: string): string | null {
+  if (value === undefined || value === null) return null;
+  return isWholeMinutes(value) ? null : `${field} is not a positive whole number`;
+}
+
+/** A planned duration: a positive whole number of minutes. */
+export function isWholeMinutes(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
 function optionalStringArrayProblem(value: unknown, field: string): string | null {
   if (value === undefined || value === null) return null;
   if (!Array.isArray(value)) return `${field} is not an array`;
@@ -104,8 +116,11 @@ function taskProblem(value: unknown, id: string): string | null {
     optionalTimestampProblem(value.completedAt, "completedAt") ??
     optionalTimestampProblem(value.canceledAt, "canceledAt") ??
     optionalTimestampProblem(value.estimate, "estimate") ??
+    optionalMinutesProblem(value.estimateMinutes, "estimateMinutes") ??
     optionalStringArrayProblem(value.labels, "labels") ??
     optionalStringProblem(value.description, "description") ??
+    optionalStringProblem(value.nextStep, "nextStep") ??
+    optionalStringProblem(value.outcomeLink, "outcomeLink") ??
     optionalStringProblem(value.projectId, "projectId") ??
     optionalStringProblem(value.parentTaskId, "parentTaskId") ??
     optionalStringProblem(value.cycleId, "cycleId") ??
@@ -238,6 +253,14 @@ type RawDataResult =
   | { kind: "ok"; payload: unknown }
   | { kind: "unreadable"; detail: string };
 
+/** What reloadAfterExternalChange did with an outside change to data.json. */
+export type ExternalChangeResult = "unchanged" | "reloaded" | "deferred" | "rejected";
+
+/** Same content regardless of formatting, so our own pretty-printed write compares equal. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
 export class TempoStore {
   private static instances = new WeakMap<Plugin, TempoStore>();
   private static readonly MAX_BACKUPS = 3;
@@ -268,6 +291,8 @@ export class TempoStore {
   private currentRevision = 0;
   private savedRevision = 0;
   private loadPromise: Promise<TempoPluginData> | null = null;
+  /** data.json as this session last read or wrote it (canonical JSON), to tell an outside change from our own. */
+  private lastDiskJson: string | null = null;
   /** The Tempo task Crisp Focus is working on now. Runtime only, never saved. */
   private activeFocusState: ActiveFocus | null = null;
 
@@ -447,12 +472,8 @@ export class TempoStore {
     }
 
     const record = payload as Record<string, unknown>;
-    // Before 0.3.0 only `locale` existed and new installs wrote "zh" without the user choosing it,
-    // so a stored "zh" means "never chosen" and now follows Obsidian; a stored "en" was a choice.
-    const language: LanguageSetting =
-      record.language === "auto" || record.language === "zh" || record.language === "en"
-        ? record.language
-        : record.locale === "en" ? "en" : "auto";
+    const prefs = TempoStore.readPreferences(record);
+    const { language } = prefs;
     this.loadLocale = resolveLocale(language);
     setActiveLocale(this.loadLocale, resolveHant(language));
     const validation = validateDatabase(record.database, { salvage });
@@ -470,9 +491,7 @@ export class TempoStore {
     const cleanData: TempoPluginData = {
       schemaVersion: 1,
       locale: resolveLocale(language),
-      language,
-      defaultDest: record.defaultDest === "today" ? "today" : "inbox",
-      exportFolder: typeof record.exportFolder === "string" ? record.exportFolder : undefined,
+      ...prefs,
       licenseKey: typeof record.licenseKey === "string" ? record.licenseKey : undefined,
       licenseStatus:
         record.licenseStatus === "valid" ||
@@ -511,6 +530,7 @@ export class TempoStore {
     // One recoverable snapshot per day, taken before this session starts writing.
     await this.ensureDailyBackup();
 
+    this.lastDiskJson = canonicalJson(payload);
     if (salvage && validation.dropped.length > 0) {
       await this.writeData(cleanData);
     }
@@ -568,6 +588,62 @@ export class TempoStore {
     } catch (err) {
       console.debug("Crisp Tempo: background license check failed", err);
     }
+  }
+
+  /** The plain preferences stored next to the database. */
+  private static readPreferences(
+    record: Record<string, unknown>,
+  ): { language: LanguageSetting } & Pick<TempoPluginData, "defaultDest" | "exportFolder" | "dailyCapacityMinutes"> {
+    // Before 0.3.0 only `locale` existed and new installs wrote "zh" without the user choosing it,
+    // so a stored "zh" means "never chosen" and now follows Obsidian; a stored "en" was a choice.
+    const language: LanguageSetting =
+      record.language === "auto" || record.language === "zh" || record.language === "en"
+        ? record.language
+        : record.locale === "en" ? "en" : "auto";
+    return {
+      language,
+      defaultDest: record.defaultDest === "today" ? "today" : "inbox",
+      exportFolder: typeof record.exportFolder === "string" ? record.exportFolder : undefined,
+      dailyCapacityMinutes: isWholeMinutes(record.dailyCapacityMinutes) ? record.dailyCapacityMinutes : undefined,
+    };
+  }
+
+  /**
+   * data.json was changed on disk by something other than this session (a sync service, another
+   * device). Applies it in place so open views keep their selection, unless:
+   * - it is what we last read or wrote ("unchanged"; Obsidian also reports our own writes),
+   * - this session has edits not yet on disk ("deferred"; the next save keeps this device's version),
+   * - it cannot be read or fails validation ("rejected"; memory is kept and nothing is overwritten now).
+   * Licence fields stay as they are in memory; they are checked on their own schedule.
+   */
+  public async reloadAfterExternalChange(): Promise<ExternalChangeResult> {
+    if (this.status !== "ready" || !this.data || this.loadPromise) return "unchanged";
+    const raw = await this.readRawData();
+    if (raw.kind !== "ok") return raw.kind === "missing" ? "unchanged" : "rejected";
+    if (canonicalJson(raw.payload) === this.lastDiskJson) return "unchanged";
+    if (this.pendingSaveData || this.flushPromise) return "deferred";
+    if (TempoStore.describeTopLevelProblem(raw.payload)) return "rejected";
+    const record = raw.payload as Record<string, unknown>;
+    const validation = validateDatabase(record.database);
+    if (!validation.valid || !validation.db) return "rejected";
+    // The file may have changed again while it was being read; only apply a still-ready state.
+    if (this.status !== "ready" || !this.data || this.pendingSaveData) return "deferred";
+
+    const prefs = TempoStore.readPreferences(record);
+    const locale = resolveLocale(prefs.language);
+    setActiveLocale(locale, resolveHant(prefs.language));
+    this.lastDiskJson = canonicalJson(raw.payload);
+    this.data = {
+      ...this.data,
+      ...prefs,
+      locale,
+      database: validation.db,
+      focusLog: TempoStore.loadFocusLog(record.focusLog),
+    };
+    // Undo snapshots predate the outside change; stepping back would silently revert it.
+    this.undoStack = [];
+    this.notify();
+    return "reloaded";
   }
 
   /** Focus time is secondary to the tasks: a damaged log keeps its good entries and never blocks loading. */
@@ -654,6 +730,8 @@ export class TempoStore {
   private async writeData(payload: TempoPluginData): Promise<void> {
     const adapter = this.adapter;
     const path = this.resolveDataFilePath();
+    // Recorded before writing: Obsidian may report the write as an outside change while it is in flight.
+    this.lastDiskJson = canonicalJson(payload);
 
     if (!adapter || !path) {
       await this.plugin.saveData(payload);
@@ -829,6 +907,16 @@ export class TempoStore {
   public setDefaultDest(defaultDest: "inbox" | "today"): void {
     if (!this.data) return;
     this.data = { ...this.data, defaultDest };
+    this.notify();
+    this.saveDebounced();
+  }
+
+  /** Anything but a positive whole number of minutes clears the budget. */
+  public setDailyCapacity(minutes: number | undefined): void {
+    if (!this.data) return;
+    const next = isWholeMinutes(minutes) ? minutes : undefined;
+    if (next === this.data.dailyCapacityMinutes) return;
+    this.data = { ...this.data, dailyCapacityMinutes: next };
     this.notify();
     this.saveDebounced();
   }

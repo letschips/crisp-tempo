@@ -9,6 +9,7 @@ import {
   getInboxTasks,
   getKpiStats,
   getCycleTimeStatus,
+  getDayCapacity,
   getNavCounts,
   getSomedayTasks,
   getTodayTasks,
@@ -22,6 +23,7 @@ import type { Cycle, Project, Task, TaskPriority, TaskStatus, TodoDatabase } fro
 import { getTodayString } from "../services/date-service";
 import { t, tf, type LanguageSetting, type Locale } from "../services/i18n";
 import { focusPluginStatus, startFocusForTask } from "../services/focus-bridge";
+import { openOutcomeLink } from "../services/outcome-link";
 import { CycleModal } from "./commands/CycleModal";
 import { MobileNavModal } from "./commands/MobileNavModal";
 import { ProjectModal } from "./commands/ProjectModal";
@@ -189,6 +191,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
   // views does not rescan the task set and the keydown effect below only re-subscribes when
   // the visible list actually changes.
   const database = storeState.data?.database ?? null;
+  const dailyCapacity = storeState.data?.dailyCapacityMinutes;
   const derived = useMemo(() => {
     if (!database) return null;
     const allTasks = database.tasks;
@@ -210,14 +213,16 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
       visibleTasks = sortByStatus(taskList.filter((t) => !t.parentTaskId && t.cycleId === cycleId));
     }
 
+    const childrenMap = buildChildrenMap(allTasks);
     return {
       taskList,
       visibleTasks,
-      childrenMap: buildChildrenMap(allTasks),
+      childrenMap,
       counts: getNavCounts(allTasks, today),
       kpi: getKpiStats(allTasks, today),
+      capacity: activeNav === "today" ? getDayCapacity(visibleTasks, childrenMap, dailyCapacity) : undefined,
     };
-  }, [database, activeNav, today]);
+  }, [database, activeNav, today, dailyCapacity]);
 
   // Keyboard shortcuts. The window listener is a single fixed hook installed before the
   // loading/error early returns, so the hook order never changes between renders; each ready
@@ -340,7 +345,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
 
   const { database: db, locale, defaultDest = "inbox" } = storeState.data;
   const allTasks = db.tasks;
-  const { taskList, visibleTasks, childrenMap, counts, kpi } = derived;
+  const { taskList, visibleTasks, childrenMap, counts, kpi, capacity } = derived;
   const selectedTask = selectedTaskId ? allTasks[selectedTaskId] ?? null : null;
 
   // Toggle complete / active status. A finished or canceled task reopens as todo; clicking
@@ -899,6 +904,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               onSelectTask={(id) => setSelectedTaskId(id)}
               onToggleStatus={handleToggleStatus}
               onOpenQuickAdd={openQuickAdd}
+              capacity={capacity}
             />
           ) : (
             <GenericListView
@@ -959,6 +965,11 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               canAddSubtask={storeState.data.licenseStatus === "valid"}
               onRequestLicense={promptForLicense}
               onOpenSource={(notePath) => void plugin.app.workspace.openLinkText(notePath, "", false)}
+              onOpenOutcome={(link) => {
+                void openOutcomeLink(plugin.app, link).then((missing) => {
+                  if (missing !== null) new Notice(tf("outcomeMissing", locale, { name: missing }));
+                });
+              }}
               focus={{
                 status: focusPluginStatus(plugin.app).status,
                 entries: storeState.data.focusLog?.[selectedTask.id],
@@ -1054,6 +1065,8 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
             onChangeLocale={handleChangeLocale}
             onChangeDefaultDest={handleChangeDefaultDest}
             onChangeExportFolder={(folder) => store.setExportFolder(folder)}
+            dailyCapacityMinutes={dailyCapacity}
+            onChangeDailyCapacity={(minutes) => store.setDailyCapacity(minutes)}
             onResetData={handleResetData}
             onExportData={(folder) => store.exportRawData(folder)}
             exportFolder={storeState.data?.exportFolder}

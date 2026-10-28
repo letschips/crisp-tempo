@@ -1,4 +1,5 @@
 import type { JSX } from "preact";
+import type { DayCapacity } from "../../core/selectors";
 import type { Project, Task } from "../../core/types";
 import { formatHeaderDate } from "../../services/date-service";
 import { t, tf, type Locale } from "../../services/i18n";
@@ -16,6 +17,26 @@ interface TodayViewProps {
   onSelectTask: (taskId: string) => void;
   onToggleStatus: (taskId: string) => void;
   onOpenQuickAdd: () => void;
+  capacity?: DayCapacity;
+}
+
+/** "已安排 110 / 100 分钟 · 1 项未估时 · 超出 10 分钟"; hidden until something is estimated or budgeted. */
+function CapacityLine({ capacity, locale }: { capacity: DayCapacity; locale: Locale }): JSX.Element | null {
+  const { plannedMinutes, unestimated, capacityMinutes, overMinutes } = capacity;
+  if (!capacityMinutes && plannedMinutes === 0) return null;
+  return (
+    <div className="tempo-capacity-line">
+      <span>
+        {capacityMinutes
+          ? tf("capacityPlannedOf", locale, { m: plannedMinutes, cap: capacityMinutes })
+          : tf("capacityPlanned", locale, { m: plannedMinutes })}
+      </span>
+      {unestimated > 0 && <span>{" · "}{tf("capacityUnestimated", locale, { n: unestimated })}</span>}
+      {overMinutes > 0 && (
+        <span>{" · "}<span className="tempo-capacity-over">{tf("capacityOver", locale, { m: overMinutes })}</span></span>
+      )}
+    </div>
+  );
 }
 
 export function TodayView({
@@ -28,6 +49,7 @@ export function TodayView({
   onSelectTask,
   onToggleStatus,
   onOpenQuickAdd,
+  capacity,
 }: TodayViewProps): JSX.Element {
   const inProgressTasks = tasks.filter((t) => t.status === "in_progress");
   const todoTasks = tasks.filter((t) => t.status === "todo");
@@ -57,6 +79,8 @@ export function TodayView({
           <span>{t("newTask", locale)}</span>
         </button>
       </div>
+
+      {capacity && <CapacityLine capacity={capacity} locale={locale} />}
 
       {/* Task List */}
       <div className="tempo-task-scroll">

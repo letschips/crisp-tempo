@@ -1,5 +1,7 @@
 import type { JSX } from "preact";
 import { useLayoutEffect, useState } from "preact/hooks";
+import { getTaskEffort } from "../../core/selectors";
+import { isWholeMinutes } from "../../core/store";
 import type { Cycle, Project, Task, TaskPriority, TaskStatus } from "../../core/types";
 import { getTodayString } from "../../services/date-service";
 import { t, tf, type Locale } from "../../services/i18n";
@@ -24,6 +26,8 @@ interface InspectorProps {
   onRequestLicense?: () => void;
   /** Opens the note a task came from (set by tasks created from another plugin, e.g. Pulse memos). */
   onOpenSource?: (notePath: string) => void;
+  /** Opens the task's outcome note or URL. */
+  onOpenOutcome?: (link: string) => void;
   /** Crisp Focus time on this task. Hidden when Focus is not installed and nothing was recorded. */
   focus?: {
     status: "ready" | "outdated" | "missing";
@@ -96,11 +100,16 @@ export function Inspector({
   canAddSubtask = true,
   onRequestLicense,
   onOpenSource,
+  onOpenOutcome,
   focus,
 }: InspectorProps): JSX.Element {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [titleDraft, setTitleDraft] = useState(task.title);
   const [descDraft, setDescDraft] = useState(task.description ?? "");
+  const [estimateDraft, setEstimateDraft] = useState(task.estimateMinutes ? String(task.estimateMinutes) : "");
+  const [nextStepDraft, setNextStepDraft] = useState(task.nextStep ?? "");
+  const [outcomeDraft, setOutcomeDraft] = useState(task.outcomeLink ?? "");
+  const effort = getTaskEffort(task, subtasks);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const today = getTodayString();
 
@@ -115,6 +124,31 @@ export function Inspector({
     setTitleDraft(task.title);
     setDescDraft(task.description ?? "");
   }, [task.id, task.title, task.description]);
+
+  useLayoutEffect(() => {
+    setEstimateDraft(task.estimateMinutes ? String(task.estimateMinutes) : "");
+    setNextStepDraft(task.nextStep ?? "");
+    setOutcomeDraft(task.outcomeLink ?? "");
+  }, [task.id, task.estimateMinutes, task.nextStep, task.outcomeLink]);
+
+  // Zero, negative or non-numeric input clears the estimate instead of storing it.
+  const commitEstimate = (raw: string) => {
+    const minutes = Math.round(Number(raw.trim()));
+    const next = raw.trim() && isWholeMinutes(minutes) ? minutes : undefined;
+    setEstimateDraft(next ? String(next) : "");
+    if (next !== task.estimateMinutes) onUpdateTask({ estimateMinutes: next });
+  };
+
+  /** Text fields commit on blur, trimmed; an empty one removes the field. */
+  const commitText = (field: "nextStep" | "outcomeLink", raw: string) => {
+    const next = raw.trim() || undefined;
+    if (next !== task[field]) onUpdateTask({ [field]: next });
+  };
+
+  const blurOnEnter = (e: KeyboardEvent) => {
+    if (e.isComposing || (e as any).keyCode === 229) return;
+    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+  };
 
   const handleSubtaskKeyDown = (e: KeyboardEvent) => {
     if (e.isComposing || (e as any).keyCode === 229) return;
@@ -299,6 +333,65 @@ export function Inspector({
             placement="auto"
             onChange={(d) => onUpdateTask({ dueDate: d })}
           />
+
+          {/* Estimate. A parent whose subtasks are estimated shows their sum instead: counting
+              its own number as well would plan the same work twice. */}
+          <span className="tempo-property-label">{t("estimate", locale)}</span>
+          {effort.fromSubtasks ? (
+            <span className="tempo-estimate-sum">{tf("estimateFromSubtasks", locale, { m: effort.minutes ?? 0 })}</span>
+          ) : (
+            <div className="tempo-estimate-field">
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                step={5}
+                className="tempo-property-input tempo-estimate-input"
+                value={estimateDraft}
+                aria-label={t("estimate", locale)}
+                onInput={(e) => setEstimateDraft((e.target as HTMLInputElement).value)}
+                onBlur={(e) => commitEstimate((e.target as HTMLInputElement).value)}
+                onKeyDown={blurOnEnter}
+              />
+              <span className="tempo-estimate-unit">{t("minutesUnit", locale)}</span>
+            </div>
+          )}
+
+          <span className="tempo-property-label">{t("nextStep", locale)}</span>
+          <input
+            type="text"
+            className="tempo-property-input tempo-next-step-input"
+            value={nextStepDraft}
+            placeholder={t("nextStepPlaceholder", locale)}
+            aria-label={t("nextStep", locale)}
+            onInput={(e) => setNextStepDraft((e.target as HTMLInputElement).value)}
+            onBlur={(e) => commitText("nextStep", (e.target as HTMLInputElement).value)}
+            onKeyDown={blurOnEnter}
+          />
+
+          <span className="tempo-property-label">{t("outcome", locale)}</span>
+          <div className="tempo-outcome-field">
+            <input
+              type="text"
+              className="tempo-property-input tempo-outcome-input"
+              value={outcomeDraft}
+              placeholder={t("outcomePlaceholder", locale)}
+              aria-label={t("outcome", locale)}
+              onInput={(e) => setOutcomeDraft((e.target as HTMLInputElement).value)}
+              onBlur={(e) => commitText("outcomeLink", (e.target as HTMLInputElement).value)}
+              onKeyDown={blurOnEnter}
+            />
+            {task.outcomeLink && (
+              <button
+                type="button"
+                className="tempo-action-btn tempo-outcome-open"
+                title={task.outcomeLink}
+                onClick={() => onOpenOutcome?.(task.outcomeLink!)}
+              >
+                {t("openOutcome", locale)}
+              </button>
+            )}
+          </div>
 
           {/* Source note, for tasks created from another plugin's item */}
           {task.notePath && (

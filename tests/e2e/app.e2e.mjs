@@ -1155,6 +1155,201 @@ await scenario('r7_settings_scrolls_in_a_short_leaf', async () => {
   return r;
 });
 
+// =====================================================================================
+// Round 8 — daily plan: estimates, capacity, next step, outcome, external changes
+// =====================================================================================
+
+const addTasks = (page, tasks) => page.evaluate((tasks) => {
+  const s = tempoAudit.store.TempoStore.get(plugin);
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  s.updateDatabase((db) => {
+    const next = { ...db.tasks };
+    for (const t of tasks) {
+      next[t.id] = {
+        status: 'todo', triage: 'processed', availability: 'anytime', priority: 'none',
+        createdAt: Date.now(), updatedAt: Date.now(), order: t.id,
+        ...(t.parentTaskId ? {} : { focusDate: today }), ...t,
+      };
+    }
+    return { ...db, tasks: next };
+  }, false);
+}, tasks);
+const settingsDone = (page) => page.locator('.tempo-window-card').getByRole('button', { name: '完成', exact: true }).click();
+
+await scenario('r8_estimate_and_today_capacity', async () => {
+  const p = await boot();
+  // A legacy `estimate` of unknown unit must survive untouched.
+  await p.evaluate(() => {
+    const s = tempoAudit.store.TempoStore.get(plugin);
+    s.updateDatabase((db) => ({ ...db, tasks: { ...db.tasks, 'task-1': { ...db.tasks['task-1'], estimate: 3 } } }), false);
+  });
+  assert.equal(await p.locator('.tempo-capacity-line').count(), 0, 'no capacity line before anything is estimated or budgeted');
+
+  await task(p, 'Primary Task');
+  const estimate = p.locator('.tempo-inspector-card .tempo-estimate-input');
+  await estimate.fill('45');
+  await estimate.blur();
+  await p.waitForFunction(() => fixture.disk.database.tasks['task-1'].estimateMinutes === 45);
+  assert.equal((await disk(p)).database.tasks['task-1'].estimate, 3, 'the legacy field is not reinterpreted');
+  assert.equal((await p.locator('.tempo-capacity-line').innerText()).trim(), '已安排 45 分钟');
+
+  await addTasks(p, [
+    // A parent with estimated subtasks counts its subtasks, not its own number as well.
+    { id: 'cap-parent', title: 'Parent', estimateMinutes: 999 },
+    { id: 'cap-c1', title: 'Child one', parentTaskId: 'cap-parent', estimateMinutes: 30 },
+    { id: 'cap-c2', title: 'Child two', parentTaskId: 'cap-parent', estimateMinutes: 20 },
+    { id: 'cap-c3', title: 'Child dropped', parentTaskId: 'cap-parent', estimateMinutes: 100, status: 'canceled', canceledAt: Date.now() },
+    { id: 'cap-none', title: 'Unestimated' },
+    { id: 'cap-cancel', title: 'Canceled', status: 'canceled', canceledAt: Date.now(), estimateMinutes: 500 },
+    { id: 'cap-done', title: 'Done today', status: 'done', completedAt: Date.now(), estimateMinutes: 15 },
+    { id: 'cap-done-none', title: 'Done unestimated', status: 'done', completedAt: Date.now() },
+  ]);
+  assert.equal((await p.locator('.tempo-capacity-line').innerText()).trim(), '已安排 110 分钟 · 1 项未估时');
+
+  await p.locator('.tempo-header-actions').getByRole('button', { name: '设置' }).click();
+  const capacity = p.locator('.tempo-capacity-setting-input');
+  await capacity.fill('100');
+  await capacity.blur();
+  await settingsDone(p);
+  await p.waitForFunction(() => fixture.disk.dailyCapacityMinutes === 100);
+  assert.equal((await p.locator('.tempo-capacity-line').innerText()).trim(), '已安排 110 / 100 分钟 · 1 项未估时 · 超出 10 分钟');
+  assert.equal(await p.locator('.tempo-capacity-line .tempo-capacity-over').count(), 1, 'overload is marked');
+
+  await task(p, 'Parent');
+  assert.equal(await p.locator('.tempo-inspector-card .tempo-estimate-input').count(), 0, 'a parent with estimated subtasks has no own input');
+  assert.equal((await p.locator('.tempo-inspector-card .tempo-estimate-sum').innerText()).trim(), '子任务合计 50 分钟');
+
+  // Zero or non-numbers clear the estimate rather than storing nonsense.
+  await task(p, 'Primary Task');
+  await p.locator('.tempo-inspector-card .tempo-estimate-input').fill('0');
+  await p.locator('.tempo-inspector-card .tempo-estimate-input').blur();
+  await p.waitForFunction(() => !('estimateMinutes' in fixture.disk.database.tasks['task-1']));
+  assert.equal((await p.locator('.tempo-capacity-line').innerText()).trim(), '已安排 65 / 100 分钟 · 2 项未估时');
+
+  // Clearing the budget falls back to the plain total.
+  await p.locator('.tempo-header-actions').getByRole('button', { name: '设置' }).click();
+  await p.locator('.tempo-capacity-setting-input').fill('');
+  await p.locator('.tempo-capacity-setting-input').blur();
+  await settingsDone(p);
+  await p.waitForFunction(() => !('dailyCapacityMinutes' in fixture.disk));
+  assert.equal((await p.locator('.tempo-capacity-line').innerText()).trim(), '已安排 65 分钟 · 2 项未估时');
+  await close(p);
+  return { planned: 110, budget: 100, over: 10, legacyEstimateKept: true };
+});
+
+await scenario('r8_capacity_line_in_english', async () => {
+  const p = await boot();
+  await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).setLanguage('en'));
+  await addTasks(p, [{ id: 'en-1', title: 'One', estimateMinutes: 50 }, { id: 'en-2', title: 'Two' }]);
+  await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).setDailyCapacity(40));
+  const line = (await p.locator('.tempo-capacity-line').innerText()).trim();
+  // Primary Task (unestimated) is on Today in the fixture as well.
+  assert.equal(line, '50 / 40 min planned · 2 unestimated · 10 min over');
+  await close(p);
+  return { line };
+});
+
+await scenario('r8_next_step_and_outcome_link', async () => {
+  const p = await boot();
+  await p.evaluate(() => {
+    window.__opened = [];
+    window.open = (url) => { __opened.push(['url', url]); return null; };
+    plugin.app.workspace.openLinkText = (link) => { __opened.push(['note', link]); };
+    plugin.app.metadataCache = { getFirstLinkpathDest: (link) => (link === 'Plan note' ? { path: 'Work/Plan note.md' } : null) };
+  });
+  await task(p, 'Primary Task');
+  const next = p.locator('.tempo-inspector-card .tempo-next-step-input');
+  await next.fill('Compare the two costs');
+  await next.blur();
+  await p.waitForFunction(() => fixture.disk.database.tasks['task-1'].nextStep === 'Compare the two costs');
+
+  const outcome = p.locator('.tempo-inspector-card .tempo-outcome-input');
+  await outcome.fill('[[Plan note|the plan]]');
+  await outcome.blur();
+  await p.waitForFunction(() => fixture.disk.database.tasks['task-1'].outcomeLink === '[[Plan note|the plan]]');
+  await p.locator('.tempo-inspector-card .tempo-outcome-open').click();
+
+  await outcome.fill('https://example.com/spec');
+  await outcome.blur();
+  await p.waitForFunction(() => fixture.disk.database.tasks['task-1'].outcomeLink === 'https://example.com/spec');
+  await p.locator('.tempo-inspector-card .tempo-outcome-open').click();
+
+  // A missing note is reported, never created by opening it.
+  await outcome.fill('Gone note');
+  await outcome.blur();
+  await p.waitForFunction(() => fixture.disk.database.tasks['task-1'].outcomeLink === 'Gone note');
+  await p.locator('.tempo-inspector-card .tempo-outcome-open').click();
+  const notices = await p.evaluate(() => window.__tempoNotices || []);
+  assert.ok(notices.some((n) => n.includes('找不到笔记') && n.includes('Gone note')), 'missing note is reported: ' + notices.join(' | '));
+
+  assert.deepEqual(await p.evaluate(() => __opened), [['note', 'Work/Plan note.md'], ['url', 'https://example.com/spec']]);
+
+  // Clearing the field removes it, and an empty field offers nothing to open.
+  await outcome.fill('');
+  await outcome.blur();
+  await p.waitForFunction(() => !('outcomeLink' in fixture.disk.database.tasks['task-1']));
+  assert.equal(await p.locator('.tempo-inspector-card .tempo-outcome-open').count(), 0);
+  await close(p);
+  return { nextStepSaved: true, noteOpened: true, urlOpened: true, missingReported: true };
+});
+
+await scenario('r8_external_change_reloads_in_place', async () => {
+  const p = await boot({ adapter: true, adapterRaw: 'fixture' });
+  const reload = () => p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).reloadAfterExternalChange());
+  const edit = (src) => p.evaluate((src) => {
+    const f = Object.keys(fixture.adapterFiles).find((k) => k.endsWith('/data.json'));
+    const d = JSON.parse(fixture.adapterFiles[f]);
+    new Function('d', src)(d);
+    fixture.adapterFiles[f] = JSON.stringify(d, null, 2);
+  }, src);
+
+  // Nothing changed on disk since load.
+  assert.equal(await reload(), 'unchanged');
+
+  // Our own save is not mistaken for an outside change, so undo survives it.
+  await p.evaluate(async () => {
+    const s = tempoAudit.store.TempoStore.get(plugin);
+    s.updateDatabase((db) => ({ ...db, tasks: { ...db.tasks, 'task-3': { ...db.tasks['task-3'], title: 'Local edit' } } }));
+    await s.flush();
+  });
+  assert.equal(await reload(), 'unchanged');
+  assert.equal((await storeState(p)).undo, 1, 'undo history survives our own write');
+
+  // A synced change is applied in place: the inspector stays open and shows it.
+  await task(p, 'Primary Task');
+  await edit("d.database.tasks['task-1'].title = 'Synced title'; d.dailyCapacityMinutes = 90;");
+  assert.equal(await reload(), 'reloaded');
+  await p.waitForFunction(() => document.querySelector('.tempo-inspector-title-input')?.value === 'Synced title');
+  assert.equal(await p.locator('.tempo-error-card').count(), 0);
+  assert.equal(await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).data.dailyCapacityMinutes), 90);
+  assert.equal((await storeState(p)).undo, 0, 'undo cannot step back across an outside change');
+
+  // A damaged outside write is refused; what is in memory stays.
+  await p.evaluate(() => {
+    const f = Object.keys(fixture.adapterFiles).find((k) => k.endsWith('/data.json'));
+    fixture.adapterFiles[f] = '{ "broken": ';
+  });
+  assert.equal(await reload(), 'rejected');
+  assert.equal(await p.locator('.tempo-inspector-title-input').inputValue(), 'Synced title');
+
+  // Unsaved local edits are not discarded by an outside change.
+  await p.evaluate(() => {
+    const s = tempoAudit.store.TempoStore.get(plugin);
+    s.updateDatabase((db) => ({ ...db, tasks: { ...db.tasks, 'task-1': { ...db.tasks['task-1'], title: 'Typed here' } } }));
+  });
+  await p.evaluate(() => {
+    const f = Object.keys(fixture.adapterFiles).find((k) => k.endsWith('/data.json'));
+    fixture.adapterFiles[f] = JSON.stringify({ ...JSON.parse(JSON.stringify(tempoAudit.store.TempoStore.get(plugin).data)), exportFolder: 'elsewhere' });
+  });
+  assert.equal(await reload(), 'deferred');
+  await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).flush());
+  const saved = JSON.parse((await files(p))[DATA_PATH]);
+  assert.equal(saved.database.tasks['task-1'].title, 'Typed here');
+  await close(p);
+  return { ownWriteIgnored: true, appliedInPlace: true, damagedRefused: true, unsavedKept: true };
+});
+
 await scenario('no_uncaught_page_errors', async () => {
   assert.deepEqual(pageErrors, [], 'the UI must not throw during any scenario');
   return { pageErrors: pageErrors.length };

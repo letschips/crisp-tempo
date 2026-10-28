@@ -21,7 +21,14 @@ export interface Task {
   dueDate?: string;   // YYYY-MM-DD
   focusDate?: string; // YYYY-MM-DD
   labels?: string[];
+  /** Unused by the UI and of unknown unit; kept as stored. Planning uses `estimateMinutes`. */
   estimate?: number;
+  /** Planned effort in whole minutes, counted against the daily capacity. */
+  estimateMinutes?: number;
+  /** The next concrete action, so the task can be picked up again without rereading everything. */
+  nextStep?: string;
+  /** What the task produced: a note link ("Note", "[[Note|alias]]", a path) or a URL. */
+  outcomeLink?: string;
   notePath?: string;
   /** Stable origin of a task created by another plugin, e.g. "crisp-pulse:<memo id>". One task per source. */
   sourceId?: string;

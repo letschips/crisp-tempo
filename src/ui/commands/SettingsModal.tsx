@@ -16,6 +16,7 @@ export interface SettingsModalProps {
   projectCount: number;
   cycleCount: number;
   exportFolder?: string;
+  dailyCapacityMinutes?: number;
   licenseKey?: string;
   licenseStatus?: "valid" | "invalid" | "unlicensed";
   licensePayload?: LicensePayload;
@@ -25,6 +26,8 @@ export interface SettingsModalProps {
   onChangeLocale: (language: LanguageSetting) => void;
   onChangeDefaultDest: (dest: "inbox" | "today") => void;
   onChangeExportFolder?: (folder: string) => void;
+  /** Anything but a positive whole number clears the budget. */
+  onChangeDailyCapacity?: (minutes: number | undefined) => void;
   onResetData: () => Promise<boolean>;
   onExportData: (customFolder?: string) => Promise<string>;
   onActivateLicense?: (key: string) => Promise<LicenseVerifyResult>;
@@ -41,6 +44,7 @@ export function SettingsModal({
   projectCount,
   cycleCount,
   exportFolder,
+  dailyCapacityMinutes,
   licenseKey,
   licenseStatus,
   licensePayload,
@@ -49,6 +53,7 @@ export function SettingsModal({
   onChangeLocale,
   onChangeDefaultDest,
   onChangeExportFolder,
+  onChangeDailyCapacity,
   onResetData,
   onExportData,
   onActivateLicense,
@@ -60,6 +65,7 @@ export function SettingsModal({
   const [isResetting, setIsResetting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportFolderDraft, setExportFolderDraft] = useState(exportFolder || "");
+  const [capacityDraft, setCapacityDraft] = useState(dailyCapacityMinutes ? String(dailyCapacityMinutes) : "");
   const [licenseDraft, setLicenseDraft] = useState(licenseKey || "");
   const [isActivating, setIsActivating] = useState(false);
   const [activationError, setActivationError] = useState<string | null>(null);
@@ -233,6 +239,33 @@ export function SettingsModal({
                 >
                   {t("today", locale)}
                 </button>
+              </div>
+            </div>
+
+            {/* Daily capacity: the budget the Today list's estimates are measured against */}
+            <div className="tempo-settings-item" style={{ marginTop: 12 }}>
+              <div className="tempo-settings-label-group">
+                <span className="tempo-settings-item-title">{t("dailyCapacity", locale)}</span>
+              </div>
+              <div className="tempo-estimate-field">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  step={15}
+                  className="tempo-property-input tempo-capacity-setting-input"
+                  aria-label={t("dailyCapacity", locale)}
+                  value={capacityDraft}
+                  onInput={(e) => setCapacityDraft((e.target as HTMLInputElement).value)}
+                  onBlur={(e) => {
+                    const raw = (e.target as HTMLInputElement).value.trim();
+                    const minutes = raw ? Math.round(Number(raw)) : NaN;
+                    const next = Number.isInteger(minutes) && minutes > 0 ? minutes : undefined;
+                    setCapacityDraft(next ? String(next) : "");
+                    onChangeDailyCapacity?.(next);
+                  }}
+                />
+                <span className="tempo-estimate-unit">{t("minutesUnit", locale)}</span>
               </div>
             </div>
           </div>

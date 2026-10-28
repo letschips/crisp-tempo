@@ -100,6 +100,46 @@ export function getTodayTasks(tasks: Record<string, Task> | Task[], today = getT
   });
 }
 
+export interface DayCapacity {
+  /** Estimated minutes of every Today task that is not canceled, finished ones included. */
+  plannedMinutes: number;
+  /** Open Today tasks with no estimate; they are not counted as zero. */
+  unestimated: number;
+  capacityMinutes?: number;
+  /** How far the plan exceeds the capacity; 0 when it fits or no capacity is set. */
+  overMinutes: number;
+}
+
+/**
+ * A task's planned effort. When any of its live subtasks has an estimate, the subtasks are
+ * summed and the task's own number is ignored, so a parent and its parts are never counted twice.
+ */
+export function getTaskEffort(task: Task, subtasks: Task[] = []): { minutes?: number; fromSubtasks: boolean } {
+  const estimated = subtasks.filter((s) => s.status !== "canceled" && s.estimateMinutes);
+  if (estimated.length > 0) {
+    return { minutes: estimated.reduce((sum, s) => sum + s.estimateMinutes!, 0), fromSubtasks: true };
+  }
+  return { minutes: task.estimateMinutes || undefined, fromSubtasks: false };
+}
+
+/** The Today list's planned effort against the daily capacity. `todayTasks` is getTodayTasks(). */
+export function getDayCapacity(
+  todayTasks: Task[],
+  childrenMap: Map<string, Task[]>,
+  capacityMinutes?: number,
+): DayCapacity {
+  let plannedMinutes = 0;
+  let unestimated = 0;
+  for (const task of todayTasks) {
+    if (task.status === "canceled") continue;
+    const { minutes } = getTaskEffort(task, childrenMap.get(task.id));
+    if (minutes) plannedMinutes += minutes;
+    else if (task.status !== "done") unestimated++;
+  }
+  const overMinutes = capacityMinutes ? Math.max(0, plannedMinutes - capacityMinutes) : 0;
+  return { plannedMinutes, unestimated, capacityMinutes, overMinutes };
+}
+
 /**
  * Tasks for Inbox view: items captured but not triaged yet.
  * Items that are already finished or canceled have been handled, so they leave the inbox

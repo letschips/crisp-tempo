@@ -146,8 +146,10 @@ export default class CrispTempoPlugin extends Plugin {
   }
 
   /**
-   * How many tasks were finished today, by the same rule as Tempo's own "completed today" (subtasks
-   * included). Crisp Pulse compares it after each crisp-tempo:state and sends up a lantern per new one.
+   * How many tasks were finished today, subtasks included. Each task uses the same "completed today"
+   * rule as Tempo's views, but the "today done" card counts top-level tasks only, so this number
+   * can be larger than the card. Crisp Pulse compares it after each crisp-tempo:state and sends up
+   * a lantern per new one, which is why finished subtasks count here.
    */
   async getCompletedToday(): Promise<{ date: string; count: number }> {
     const store = await this.readyStore();
@@ -162,6 +164,22 @@ export default class CrispTempoPlugin extends Plugin {
     if (!store.data!.database.tasks[taskId]) throw new Error(lt("这个任务在 Tempo 里已经不存在", "This task no longer exists in Tempo"));
     await this.activateView();
     store.revealTask(taskId);
+  }
+
+  /** data.json changed outside Obsidian's own writes, e.g. synced from another device. */
+  async onExternalSettingsChange(): Promise<void> {
+    if (this.unloaded) return;
+    const store = TempoStore.get(this);
+    try {
+      const result = await store.reloadAfterExternalChange();
+      if (result === "deferred") {
+        new Notice(t("externalChangeDeferred", store.data?.locale ?? detectObsidianLocale()));
+      } else if (result === "rejected") {
+        console.warn("Crisp Tempo: ignored an outside change to data.json that could not be read or validated");
+      }
+    } catch (err) {
+      console.error("Crisp Tempo: could not apply an outside change to data.json", err);
+    }
   }
 
   private async handleFocusEvent(event: unknown): Promise<void> {

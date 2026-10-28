@@ -6,7 +6,11 @@
 // - the same reminder is imported twice (second Mac with other local ids, or a merge);
 // - tasks are created from Reminders without a licence;
 // - two devices' links or settings are lost when data.json merges;
-// - overlapping meetings are counted twice against the day.
+// - overlapping meetings are counted twice against the day, or free/canceled ones count at all;
+// - an unlinked task's reminder comes back as a second task (audit F1);
+// - two Macs importing the same reminder at once both keep syncing it (audit F2);
+// - a write does not say what it was planned against, so a later phone edit is overwritten (audit F4);
+// - "no list" is lost and becomes the default list again (audit F6).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -72,7 +76,10 @@ test("a reminder finished in Reminders finishes the task, and reopening it reope
 test("a Tempo edit becomes an update, and once written nothing is left to do", () => {
   const edited = task({ title: "写周报（含数据）", dueDate: "2026-10-30", status: "done", completedAt: T0 + 1, updatedAt: T0 + 1 });
   const first = plan({ tasks: [edited], items: [reminder()] });
-  assert.deepEqual(first.updates, [{ taskId: "t1", id: "R1", externalId: "EXT-1", title: "写周报（含数据）", due: "2026-10-30", completed: true }]);
+  assert.deepEqual(first.updates, [{
+    taskId: "t1", id: "R1", externalId: "EXT-1", listId: "L1", title: "写周报（含数据）", due: "2026-10-30", completed: true,
+    expect: { title: "写周报", due: null, completed: false },
+  }]);
   assert.equal(first.db.tasks.t1, edited, "nothing pulled");
   const links = { t1: confirmUpdate(first.links.t1, first.updates[0]) };
   const second = plan({
@@ -190,6 +197,8 @@ test("stored settings keep what is readable and drop broken links", () => {
     links: { t1: link(), t2: { id: "R9", title: "x" }, t3: link({ due: "tomorrow" }) },
   });
   assert.deepEqual(clean, { remindersEnabled: true, reminderLists: ["L1"], links: { t1: link() } });
+  assert.deepEqual(cleanAppleSettings({ reminderLists: [], links: { t1: link({ off: true }) } }), { reminderLists: [], links: { t1: link({ off: true }) } },
+    "an empty choice and a switched-off link survive saving");
   assert.equal(cleanAppleSettings({}), undefined);
   assert.equal(cleanAppleSettings("x"), undefined);
 });
@@ -208,6 +217,32 @@ test("links from both devices survive a merge; a setting changed on one side is 
   assert.equal(removed.links, undefined, "a link removed on one side stays removed");
 });
 
+test("an unlinked task neither syncs nor comes back as a second task; it is let go once the reminder is done", () => {
+  const off = { t1: link({ off: true }) };
+  const result = plan({
+    tasks: [task({ title: "Tempo 改了", updatedAt: T0 + 9 })], links: off,
+    items: [reminder({ title: "手机改了", modifiedAt: T0 + 5 })], reminders: [reminder({ title: "手机改了" })],
+  });
+  assert.deepEqual(result.updates, []);
+  assert.equal(result.db.tasks.t1.title, "Tempo 改了");
+  assert.equal(result.imported, 0);
+  assert.equal(result.links.t1.off, true);
+  assert.equal(plan({ links: off, items: [reminder({ completed: true })] }).links.t1, undefined);
+  assert.equal(plan({ links: off, missing: ["R1"] }).links.t1, undefined);
+});
+
+test("two tasks linked to one reminder (two Macs imported it at once): the oldest keeps it, nothing is deleted", () => {
+  const a = task({ id: "a", createdAt: T0 + 2 });
+  const b = task({ id: "b", createdAt: T0 + 1, title: "改过的" , updatedAt: T0 + 50 });
+  const links = { a: link({ id: "MAC-A" }), b: link({ id: "MAC-B" }) };
+  const result = plan({ tasks: [a, b], links, items: [reminder({ id: "MAC-A", requestedId: "MAC-A" }), reminder({ id: "MAC-A", requestedId: "MAC-B" })] });
+  assert.equal(result.duplicates, 1);
+  assert.equal(result.links.a.off, true, "the newer task's link is switched off");
+  assert.equal(result.links.b.off, undefined);
+  assert.deepEqual(Object.keys(result.db.tasks).sort(), ["a", "b"]);
+  assert.deepEqual(result.updates.map((u) => u.taskId), ["b"], "only the kept task writes");
+});
+
 test("busy minutes count overlaps once, clip to the day and skip all-day events", () => {
   const day = new Date("2026-10-28T00:00:00").getTime();
   const at = (h, m = 0) => day + (h * 60 + m) * 60000;
@@ -216,6 +251,8 @@ test("busy minutes count overlaps once, clip to the day and skip all-day events"
     { id: "b", title: "评审", start: at(9, 30), end: at(11), allDay: false },
     { id: "c", title: "假期", start: day, end: day + 86400000, allDay: true },
     { id: "d", title: "跨夜", start: at(23), end: at(25), allDay: false },
+    { id: "e", title: "午饭（空闲）", start: at(12), end: at(13), allDay: false, availability: "free" },
+    { id: "f", title: "取消的会", start: at(14), end: at(15), allDay: false, status: "canceled" },
   ];
   assert.equal(busyMinutes(events, day, day + 86400000), 120 + 60);
 });

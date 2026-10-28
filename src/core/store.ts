@@ -50,6 +50,8 @@ export interface AppleRuntime {
   /** Today's events, for `eventsDate`. */
   events?: CalendarEvent[];
   eventsDate?: string;
+  /** The last attempt to load today's events failed; `events` are from an earlier load. */
+  eventsError?: string;
   syncing?: boolean;
   lastSync?: { at: number; ok: boolean; message?: string; imported?: number; pulled?: number; pushed?: number };
   /** Set when the helper could not be started or answered with an error. */

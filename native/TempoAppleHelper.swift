@@ -11,8 +11,10 @@
 //   calendars                   calendars that hold events
 //   reminders                   {"lists":[id],"items":[{"id","externalId"}]}: open reminders in the lists,
 //                               plus the given items in any state and list; items not found are in "missing"
-//   apply-reminders             {"updates":[{"id","externalId","title"?,"notes"?,"due"?,"completed"?}],
+//   apply-reminders             {"updates":[{"id","externalId","listId"?,"title"?,"notes"?,"due"?,"completed"?,"expect"?}],
 //                                "creates":[{"key","listId","title","notes"?,"due"?}]}
+//                               an update whose "expect" values no longer match the reminder is refused
+//                               with code "changed" (edited elsewhere since it was read)
 //   events                      {"from":ms,"to":ms,"calendars":[id]|null}: events overlapping the range
 
 import EventKit
@@ -146,10 +148,14 @@ func fetchReminders(_ predicate: NSPredicate) -> [EKReminder] {
   return result
 }
 
-func findReminder(id: String?, externalId: String?) -> EKReminder? {
+func findReminder(id: String?, externalId: String?, listId: String? = nil) -> EKReminder? {
   // The external identifier is the same on every Mac that syncs the list; the local one is not.
+  // It can match more than one item: the local id, then the list the link was in, decide.
   if let externalId, !externalId.isEmpty {
-    if let found = store.calendarItems(withExternalIdentifier: externalId).compactMap({ $0 as? EKReminder }).first {
+    let matches = store.calendarItems(withExternalIdentifier: externalId).compactMap { $0 as? EKReminder }
+    if let found = matches.first(where: { $0.calendarItemIdentifier == id })
+      ?? matches.first(where: { listId != nil && $0.calendar?.calendarIdentifier == listId })
+      ?? matches.first {
       return found
     }
   }
@@ -207,7 +213,7 @@ func runReminders(_ request: [String: Any]) {
   for item in (request["items"] as? [[String: Any]]) ?? [] {
     let id = item["id"] as? String
     let externalId = item["externalId"] as? String
-    if let r = findReminder(id: id, externalId: externalId) {
+    if let r = findReminder(id: id, externalId: externalId, listId: item["listId"] as? String) {
       var object = reminderObject(r)
       object["requestedId"] = id ?? NSNull()
       found.append(object)
@@ -228,9 +234,27 @@ func runApplyReminders(_ request: [String: Any]) {
   var results: [[String: Any]] = []
   for update in (request["updates"] as? [[String: Any]]) ?? [] {
     let id = update["id"] as? String
-    guard let reminder = findReminder(id: id, externalId: update["externalId"] as? String) else {
+    guard let reminder = findReminder(id: id, externalId: update["externalId"] as? String, listId: update["listId"] as? String) else {
       results.append(["id": id ?? NSNull(), "ok": false, "code": "missing", "message": "The reminder no longer exists."])
       continue
+    }
+    if let expect = update["expect"] as? [String: Any] {
+      let now = reminderObject(reminder)
+      let changed = expect.keys.filter { key in
+        let a = expect[key].flatMap { $0 is NSNull ? nil : $0 }
+        let b = now[key].flatMap { $0 is NSNull ? nil : $0 }
+        switch (a, b) {
+        case (nil, nil): return false
+        case let (x as String, y as String): return x != y
+        case let (x as Bool, y as Bool): return x != y
+        default: return true
+        }
+      }
+      if !changed.isEmpty {
+        results.append(["id": id ?? NSNull(), "ok": false, "code": "changed",
+                        "message": "Changed in Reminders since it was read: \(changed.sorted().joined(separator: ", "))."])
+        continue
+      }
     }
     do {
       if let title = update["title"] as? String { reminder.title = title }
@@ -287,6 +311,27 @@ func runApplyReminders(_ request: [String: Any]) {
   emit(["updates": results, "creates": createResults])
 }
 
+func availabilityName(_ value: EKEventAvailability) -> String {
+  switch value {
+  case .busy: return "busy"
+  case .free: return "free"
+  case .tentative: return "tentative"
+  case .unavailable: return "unavailable"
+  case .notSupported: return "notSupported"
+  @unknown default: return "unknown"
+  }
+}
+
+func statusName(_ value: EKEventStatus) -> String {
+  switch value {
+  case .none: return "none"
+  case .confirmed: return "confirmed"
+  case .tentative: return "tentative"
+  case .canceled: return "canceled"
+  @unknown default: return "unknown"
+  }
+}
+
 func runEvents(_ request: [String: Any]) {
   requireAccess(.event)
   guard let from = request["from"] as? Double, let to = request["to"] as? Double, to > from else {
@@ -316,6 +361,8 @@ func runEvents(_ request: [String: Any]) {
       "calendarTitle": e.calendar?.title ?? NSNull(),
       "color": hexColor(e.calendar?.cgColor),
       "location": e.location ?? NSNull(),
+      "availability": availabilityName(e.availability),
+      "status": statusName(e.status),
     ]
   }
   emit(["events": events])

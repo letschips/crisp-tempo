@@ -47,6 +47,8 @@ export class AppleSyncController {
   private linkedSeen = new Map<string, Task | undefined>();
   /** True while this controller writes to the store, so its own changes are not synced back. */
   private applying = false;
+  /** Syncs in a row that found reminders edited between reading and writing; bounded so it cannot loop. */
+  private changedRetries = 0;
 
   constructor(private plugin: Plugin) {}
 
@@ -155,10 +157,12 @@ export class AppleSyncController {
       const events = answer.events
         .filter((event) => !hidden.has(event.calendarId ?? ""))
         .sort((a, b) => Number(b.allDay) - Number(a.allDay) || a.start - b.start || a.title.localeCompare(b.title));
-      store.setAppleRuntime({ events, eventsDate: today });
+      store.setAppleRuntime({ events, eventsDate: today, eventsError: undefined });
     } catch (err) {
       console.warn("Crisp Tempo: could not load today's events", err);
-      if (needsAccess(err)) store.setAppleRuntime({ calendar: "denied", events: undefined });
+      // Events from an earlier load stay (a timeout should not empty the day) but are marked as not current.
+      if (needsAccess(err)) store.setAppleRuntime({ calendar: "denied", events: undefined, eventsError: undefined });
+      else store.setAppleRuntime({ eventsError: describe(err) });
     }
   }
 
@@ -170,8 +174,10 @@ export class AppleSyncController {
     try {
       const fetched = await runAppleHelper<ReminderFetch>(this.plugin, "reminders", {
         lists: settings.reminderLists ?? [],
-        items: Object.values(links).map((link) => ({ id: link.id, externalId: link.externalId ?? null })),
+        items: Object.values(links).map((link) => ({ id: link.id, externalId: link.externalId ?? null, listId: link.listId ?? null })),
       });
+      // Turned off while reading: nothing more is read into Tempo or written to Reminders.
+      if (!store.data?.apple?.remindersEnabled) return;
       let updates: ReminderUpdate[] = [];
       let imported = 0;
       let pulled = 0;
@@ -188,12 +194,14 @@ export class AppleSyncController {
         updates = plan.updates;
         imported = plan.imported;
         pulled = plan.pulled;
+        if (plan.duplicates) console.warn(`Crisp Tempo: ${plan.duplicates} task(s) were linked to a reminder another task holds; their links were switched off`);
         if (plan.db === db && JSON.stringify(plan.links) === JSON.stringify(apple.links ?? {})) return null;
         return { db: plan.db, apple: { ...apple, links: plan.links } };
       });
       let pushed = 0;
+      let changed = 0;
       const failures: string[] = [];
-      if (updates.length) {
+      if (updates.length && store.data?.apple?.remindersEnabled) {
         const answer = await runAppleHelper<ApplyAnswer>(this.plugin, "apply-reminders", {
           updates: updates.map(({ taskId: _taskId, ...update }) => update),
         });
@@ -208,6 +216,9 @@ export class AppleSyncController {
               pushed++;
             } else if (result.code === "missing") {
               delete next[update.taskId];
+            } else if (result.code === "changed") {
+              // Edited in Reminders after it was read: nothing was written; the next sync merges both edits.
+              changed++;
             } else {
               failures.push(result.message ?? result.code ?? "?");
             }
@@ -217,6 +228,12 @@ export class AppleSyncController {
       }
       const ok = failures.length === 0;
       store.setAppleRuntime({ lastSync: { at: Date.now(), ok, message: failures[0], imported, pulled, pushed } });
+      if (changed && this.changedRetries < 2) {
+        this.changedRetries++;
+        void this.syncNow();
+      } else {
+        this.changedRetries = 0;
+      }
       if (manual) {
         new Notice(ok
           ? lt(`已和提醒事项同步：导入 ${imported} 项，更新 ${pulled + pushed} 项`, `Synced with Reminders: ${imported} imported, ${pulled + pushed} updated`)
@@ -253,8 +270,9 @@ export class AppleSyncController {
       else await this.loadCalendars();
       store.updateAppleSettings((prev) => {
         const next = { ...prev, [field]: true };
-        // First time on: Tempo starts with the system's default list rather than every list.
-        if (kind === "reminders" && !prev.reminderLists?.length && store.appleRuntime.defaultListId) {
+        // First time on: Tempo starts with the system's default list rather than every list. A choice
+        // made before, even "no list", is kept.
+        if (kind === "reminders" && prev.reminderLists === undefined && store.appleRuntime.defaultListId) {
           next.reminderLists = [store.appleRuntime.defaultListId];
         }
         return next;
@@ -280,7 +298,8 @@ export class AppleSyncController {
     await this.exclusive(async () => {
       const task = store.data?.database.tasks[taskId];
       const settings = store.data?.apple ?? {};
-      if (!task || settings.links?.[taskId]) return;
+      const existing = settings.links?.[taskId];
+      if (!task || (existing && !existing.off)) return;
       const values = linkValuesOf(task);
       const answer = await runAppleHelper<ApplyAnswer>(this.plugin, "apply-reminders", {
         creates: [{ key: taskId, listId: settings.sendListId ?? null, title: values.title, notes: values.notes, due: values.due }],
@@ -298,13 +317,15 @@ export class AppleSyncController {
     });
   }
 
-  /** Stops syncing the task; both it and the reminder stay. An imported task keeps its source, so it is not imported again. */
+  /**
+   * Stops syncing the task; both it and the reminder stay. The link is kept switched off, so the
+   * reminder is not imported again as a second task (it is dropped once the reminder is done or deleted).
+   */
   private unlinkTask(taskId: string): void {
     this.store.updateAppleSettings((prev) => {
-      if (!prev.links?.[taskId]) return prev;
-      const links = { ...prev.links };
-      delete links[taskId];
-      return { ...prev, links };
+      const link = prev.links?.[taskId];
+      if (!link || link.off) return prev;
+      return { ...prev, links: { ...prev.links, [taskId]: { ...link, off: true } } };
     });
     this.linkedSeen.delete(taskId);
   }

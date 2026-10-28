@@ -945,6 +945,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               capacity={capacity}
               activeFocus={storeState.activeFocus}
               events={todayEvents}
+              eventsStale={!!storeState.apple.eventsError}
             />
           ) : (
             <GenericListView
@@ -1011,7 +1012,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               reminder={
                 store.appleActions && storeState.data.apple?.remindersEnabled && storeState.apple.reminders === "fullAccess"
                   ? {
-                      link: storeState.data.apple.links?.[selectedTask.id],
+                      link: storeState.data.apple.links?.[selectedTask.id]?.off ? undefined : storeState.data.apple.links?.[selectedTask.id],
                       onAdd: () => void store.appleActions?.sendTask(selectedTask.id),
                       onUnlink: () => store.appleActions?.unlinkTask(selectedTask.id),
                     }

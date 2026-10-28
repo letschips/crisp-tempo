@@ -2766,3 +2766,15 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
 .tempo-reminder-add {
   justify-self: start;
 }
+
+.tempo-events-stale {
+  margin-left: 6px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-warning, #d99a2b);
+}
+
+.tempo-event-row.is-canceled .tempo-event-title {
+  text-decoration: line-through;
+}

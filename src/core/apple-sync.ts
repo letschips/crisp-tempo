@@ -7,7 +7,12 @@ import type { Task, TodoDatabase } from "./types";
  * A linked task and its reminder share four fields: title, notes (the task's description), due day
  * and done. The link stores the values both sides had at the last sync; a side whose value differs
  * from it changed since. Only one side changed: it wins. Both changed to different values: the side
- * modified later wins (the reminder's lastModifiedDate against the task's updatedAt).
+ * modified later wins (the reminder's lastModifiedDate against the task's updatedAt). Each write
+ * carries the values it was planned against, and the helper refuses it when the reminder changed
+ * since (an edit on the phone between reading and writing); the next sync merges again.
+ *
+ * A link switched `off` (unlinked by the user, or a duplicate) no longer syncs but still holds the
+ * reminder back from being imported again, like a link whose task was deleted.
  */
 
 export interface ReminderLink {
@@ -21,11 +26,13 @@ export interface ReminderLink {
   notes: string;
   due: string | null;
   completed: boolean;
+  /** No longer synced; kept so the reminder is not imported again. */
+  off?: true;
 }
 
 export interface AppleSettings {
   remindersEnabled?: boolean;
-  /** Lists whose open reminders become Tempo tasks. Identifiers are per Mac. */
+  /** Lists whose open reminders become Tempo tasks. Identifiers are per Mac. Unset: never chosen; [] means none. */
   reminderLists?: string[];
   /** List that "Add to Reminders" puts a task in; unset means the system default list. */
   sendListId?: string;
@@ -66,6 +73,9 @@ export interface ReminderUpdate {
   taskId: string;
   id: string;
   externalId?: string;
+  listId?: string;
+  /** The reminder's values (as fetched) for the fields being written; the helper writes only if they still hold. */
+  expect?: Partial<Pick<AppleReminder, "title" | "notes" | "due" | "completed">>;
   title?: string;
   notes?: string;
   due?: string | null;
@@ -81,6 +91,8 @@ export interface ReminderSyncPlan {
   /** Tasks changed from Reminders. */
   pulled: number;
   unlinked: number;
+  /** Tasks found linked to a reminder another task already holds (two Macs imported it at once); their links were switched off. */
+  duplicates: number;
 }
 
 type Shared = Pick<ReminderLink, "title" | "notes" | "due" | "completed">;
@@ -142,6 +154,32 @@ function withValues(task: Task, values: Partial<Shared>, reminder: AppleReminder
   return next;
 }
 
+/** One reminder's identity across Macs: its external id where it has one. */
+const linkKey = (link: Pick<ReminderLink, "id" | "externalId">) => link.externalId || `local:${link.id}`;
+
+/**
+ * When several active links point at the same reminder, the oldest task keeps it and the others are
+ * switched off. Every Mac picks the same one, and no task is deleted: the extra one stays for the user.
+ */
+function dropDuplicateLinks(links: Record<string, ReminderLink>, tasks: Record<string, Task>): number {
+  const groups = new Map<string, string[]>();
+  for (const [taskId, link] of Object.entries(links)) {
+    if (link.off || !tasks[taskId]) continue;
+    const key = linkKey(link);
+    groups.set(key, [...(groups.get(key) ?? []), taskId]);
+  }
+  let dropped = 0;
+  for (const ids of groups.values()) {
+    if (ids.length < 2) continue;
+    ids.sort((a, b) => tasks[a].createdAt - tasks[b].createdAt || (a < b ? -1 : 1));
+    for (const taskId of ids.slice(1)) {
+      links[taskId] = { ...links[taskId], off: true };
+      dropped++;
+    }
+  }
+  return dropped;
+}
+
 function linkMatches(link: ReminderLink, reminder: AppleReminder): boolean {
   return link.id === reminder.id || (!!reminder.externalId && link.externalId === reminder.externalId);
 }
@@ -179,8 +217,9 @@ export function planReminderSync(input: {
   let pulled = 0;
   let unlinked = 0;
   let imported = 0;
+  const duplicates = dropDuplicateLinks(links, tasks);
 
-  for (const [taskId, link] of Object.entries(input.links)) {
+  for (const [taskId, link] of Object.entries(links)) {
     const reminder = byRequested.get(link.id);
     if (!reminder) {
       // Deleted in Reminders: the task stays as it is and is no longer linked.
@@ -197,8 +236,8 @@ export function planReminderSync(input: {
       ...(reminder.listTitle ? { listTitle: reminder.listTitle } : {}),
     };
     const task = tasks[taskId];
-    if (!task) {
-      // The task was deleted in Tempo; the reminder is left alone. Once it is done, nothing is left to hold back.
+    if (!task || link.off) {
+      // The task was deleted or unlinked in Tempo; the reminder is left alone. Once it is done, nothing is left to hold back.
       if (reminder.completed) delete links[taskId];
       else links[taskId] = placed;
       continue;
@@ -233,11 +272,17 @@ export function planReminderSync(input: {
     }
     links[taskId] = placed;
     if (Object.keys(push).length) {
+      const expect: NonNullable<ReminderUpdate["expect"]> = {};
+      for (const field of FIELDS) {
+        if (push[field] !== undefined) (expect as Record<string, unknown>)[field] = reminder[field] ?? (field === "notes" ? "" : null);
+      }
       updates.push({
         taskId,
         id: link.id,
         ...(placed.externalId ? { externalId: placed.externalId } : {}),
+        ...(placed.listId ? { listId: placed.listId } : {}),
         ...push,
+        expect,
       });
     }
   }
@@ -284,6 +329,7 @@ export function planReminderSync(input: {
     imported,
     pulled,
     unlinked,
+    duplicates,
   };
 }
 
@@ -313,6 +359,7 @@ function cleanLink(raw: unknown): ReminderLink | null {
   const listId = optional(raw.listId);
   const listTitle = optional(raw.listTitle);
   return {
+    ...(raw.off === true ? { off: true as const } : {}),
     id: raw.id,
     ...(externalId ? { externalId } : {}),
     ...(listId ? { listId } : {}),
@@ -338,7 +385,8 @@ export function cleanAppleSettings(raw: unknown): AppleSettings | undefined {
   }
   const out: AppleSettings = {
     ...(raw.remindersEnabled === true ? { remindersEnabled: true } : {}),
-    ...(ids(raw.reminderLists)?.length ? { reminderLists: ids(raw.reminderLists) } : {}),
+    // An empty list is a choice ("import nothing") and is kept; only a missing one means "never chosen".
+    ...(ids(raw.reminderLists) ? { reminderLists: ids(raw.reminderLists) } : {}),
     ...(typeof raw.sendListId === "string" && raw.sendListId ? { sendListId: raw.sendListId } : {}),
     ...(raw.calendarEnabled === true ? { calendarEnabled: true } : {}),
     ...(ids(raw.hiddenCalendars)?.length ? { hiddenCalendars: ids(raw.hiddenCalendars) } : {}),
@@ -356,12 +404,21 @@ export interface CalendarEvent {
   calendarId?: string;
   calendarTitle?: string;
   color?: string;
+  /** EventKit availability: busy, free, tentative, unavailable or notSupported. */
+  availability?: string;
+  /** EventKit status: none, confirmed, tentative or canceled. */
+  status?: string;
 }
 
-/** Minutes of timed events inside [dayStart, dayEnd), overlaps counted once. All-day events take no time. */
+/** Whether an event takes time from the day: timed, not shown as free, not canceled. */
+export function takesTime(event: CalendarEvent): boolean {
+  return !event.allDay && event.availability !== "free" && event.status !== "canceled";
+}
+
+/** Minutes of events that take time (see takesTime) inside [dayStart, dayEnd), overlaps counted once. */
 export function busyMinutes(events: readonly CalendarEvent[], dayStart: number, dayEnd: number): number {
   const spans = events
-    .filter((event) => !event.allDay && event.end > event.start)
+    .filter((event) => takesTime(event) && event.end > event.start)
     .map((event) => [Math.max(event.start, dayStart), Math.min(event.end, dayEnd)] as const)
     .filter(([start, end]) => end > start)
     .sort((a, b) => a[0] - b[0]);

@@ -27,6 +27,11 @@ export default class CrispTempoPlugin extends Plugin {
     // not on every save-status update.
     const store = TempoStore.get(this);
     let lastDatabase: unknown = null;
+    this.register(store.onOutsideConflict((conflict) => {
+      const locale = store.data?.locale ?? detectObsidianLocale();
+      const names = conflict.titles.slice(0, 3).map((title) => `「${title}」`).join(locale === "zh" ? "、" : ", ");
+      new Notice(tf("externalChangeConflict", locale, { names, more: conflict.titles.length > 3 ? (locale === "zh" ? " 等" : " and more") : "", path: conflict.copyPath }), 0);
+    }));
     this.register(store.subscribe(() => {
       const database = store.data?.database ?? null;
       if (database === lastDatabase) return;
@@ -176,10 +181,9 @@ export default class CrispTempoPlugin extends Plugin {
     if (this.unloaded) return;
     const store = TempoStore.get(this);
     try {
+      // Conflicts are announced by the store's listener, also when a later save finds the change first.
       const result = await store.reloadAfterExternalChange();
-      if (result === "deferred") {
-        new Notice(t("externalChangeDeferred", store.data?.locale ?? detectObsidianLocale()));
-      } else if (result === "rejected") {
+      if (result === "rejected") {
         console.warn("Crisp Tempo: ignored an outside change to data.json that could not be read or validated");
       }
     } catch (err) {

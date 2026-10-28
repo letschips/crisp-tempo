@@ -5,6 +5,7 @@ import type { Area, Cycle, Label, Project, Task, TodoDatabase } from "./types";
 import type { LicensePayload, LicenseVerifyResult } from "../services/license";
 import { inheritVaultCrispLicense, verifyLicenseCode } from "../services/license";
 import { addFocusEntry, cleanFocusLog, type ActiveFocus, type FocusEntry, type FocusLog } from "../services/focus-bridge";
+import { mergeDatabase, mergeFocusLog, mergeSetting, type MergeConflict } from "./merge";
 
 export interface TempoPluginData {
   schemaVersion: number;
@@ -254,7 +255,15 @@ type RawDataResult =
   | { kind: "unreadable"; detail: string };
 
 /** What reloadAfterExternalChange did with an outside change to data.json. */
-export type ExternalChangeResult = "unchanged" | "reloaded" | "deferred" | "rejected";
+export type ExternalChangeResult = "unchanged" | "reloaded" | "merged" | "conflict" | "deferred" | "rejected";
+
+/** Both sides changed the same objects; this device's versions were kept and the other side's file copied. */
+export interface OutsideConflict {
+  titles: string[];
+  conflicts: MergeConflict[];
+  /** Vault path of the copy of the other side's data.json. */
+  copyPath: string;
+}
 
 /** Same content regardless of formatting, so our own pretty-printed write compares equal. */
 function canonicalJson(value: unknown): string {
@@ -293,6 +302,10 @@ export class TempoStore {
   private loadPromise: Promise<TempoPluginData> | null = null;
   /** data.json as this session last read or wrote it (canonical JSON), to tell an outside change from our own. */
   private lastDiskJson: string | null = null;
+  /** Set when a save merged an outside change, read by reloadAfterExternalChange. */
+  private outsideMergeResult: "merged" | "conflict" | null = null;
+  public lastOutsideConflict: OutsideConflict | null = null;
+  private conflictListeners = new Set<(conflict: OutsideConflict) => void>();
   /** The Tempo task Crisp Focus is working on now. Runtime only, never saved. */
   private activeFocusState: ActiveFocus | null = null;
 
@@ -612,12 +625,21 @@ export class TempoStore {
    * data.json was changed on disk by something other than this session (a sync service, another
    * device). Applies it in place so open views keep their selection, unless:
    * - it is what we last read or wrote ("unchanged"; Obsidian also reports our own writes),
-   * - this session has edits not yet on disk ("deferred"; the next save keeps this device's version),
+   * - this session has edits not yet on disk: they are saved now, merged with the outside change
+   *   ("merged", or "conflict" when both changed the same objects; see absorbOutsideChanges),
+   *   or "deferred" when that save failed and nothing was written,
    * - it cannot be read or fails validation ("rejected"; memory is kept and nothing is overwritten now).
    * Licence fields stay as they are in memory; they are checked on their own schedule.
    */
   public async reloadAfterExternalChange(): Promise<ExternalChangeResult> {
     if (this.status !== "ready" || !this.data || this.loadPromise) return "unchanged";
+    // With edits not yet on disk, saving now merges the outside change instead of overwriting it.
+    if (this.pendingSaveData || this.flushPromise) {
+      this.outsideMergeResult = null;
+      await this.flush();
+      if (this.outsideMergeResult) return this.outsideMergeResult;
+      if (this.pendingSaveData) return "deferred";
+    }
     const raw = await this.readRawData();
     if (raw.kind !== "ok") return raw.kind === "missing" ? "unchanged" : "rejected";
     if (canonicalJson(raw.payload) === this.lastDiskJson) return "unchanged";
@@ -731,6 +753,7 @@ export class TempoStore {
     const adapter = this.adapter;
     const path = this.resolveDataFilePath();
     // Recorded before writing: Obsidian may report the write as an outside change while it is in flight.
+    const previousDiskJson = this.lastDiskJson;
     this.lastDiskJson = canonicalJson(payload);
 
     if (!adapter || !path) {
@@ -739,15 +762,26 @@ export class TempoStore {
     }
 
     const text = JSON.stringify(payload, null, 2);
-    await adapter.write(path, text, { mtime: Date.now() });
+    try {
+      await adapter.write(path, text, { mtime: Date.now() });
+    } catch (err) {
+      // Nothing was written: the file is still what it was, so it must not look like an outside change.
+      this.lastDiskJson = previousDiskJson;
+      throw err;
+    }
 
     const expectedBytes = new TextEncoder().encode(text).byteLength;
     const stat = await this.statOrNull(adapter, path);
-    if (!stat) throw new Error(lt("data.json 写入后不存在", "data.json is missing after writing"));
+    // From here the file holds an unknown, partial write of ours: the retry overwrites it without merging.
+    if (!stat) {
+      this.lastDiskJson = null;
+      throw new Error(lt("data.json 写入后不存在", "data.json is missing after writing"));
+    }
     if (stat.size !== expectedBytes) {
       // Some adapters normalise line endings, so confirm by reading the file back.
       const echo = await adapter.read(path);
       if (echo !== text) {
+        this.lastDiskJson = null;
         throw new Error(lt(`data.json 写入不完整（期望 ${expectedBytes} 字节，实际 ${stat.size} 字节）`, `data.json was written incompletely (expected ${expectedBytes} bytes, got ${stat.size})`));
       }
     }
@@ -1058,9 +1092,110 @@ export class TempoStore {
     }
   }
 
+  public onOutsideConflict(listener: (conflict: OutsideConflict) => void): () => void {
+    this.conflictListeners.add(listener);
+    return () => this.conflictListeners.delete(listener);
+  }
+
+  /**
+   * Run before every write. When data.json no longer is what this session last read or wrote, another
+   * device changed it (the sync notification may not have arrived yet), so this device's edits are
+   * merged into it instead of written over it. When both sides changed the same objects, or the file
+   * on disk is damaged, it is first copied next to data.json; if that copy fails this throws and
+   * nothing is written. Checking and writing are not one atomic step: a change landing between the
+   * read here and the write is caught by the sync notification that follows it.
+   */
+  private async absorbOutsideChanges(): Promise<void> {
+    const adapter = this.adapter;
+    const path = this.resolveDataFilePath();
+    if (!adapter || !path || !this.data || this.lastDiskJson === null) return;
+    let text: string;
+    try {
+      if (!(await adapter.exists(path))) return;
+      text = await adapter.read(path);
+    } catch {
+      return;
+    }
+    let remote: unknown;
+    try {
+      remote = JSON.parse(text);
+    } catch {
+      remote = undefined;
+    }
+    if (remote !== undefined && canonicalJson(remote) === this.lastDiskJson) return;
+
+    const validation = remote !== undefined && !TempoStore.describeTopLevelProblem(remote)
+      ? validateDatabase((remote as Record<string, unknown>).database)
+      : null;
+    if (!validation?.valid || !validation.db) {
+      // Damaged or from a newer schema: keep it, then write this device's data as before.
+      await this.keepConflictCopy(text);
+      return;
+    }
+
+    const record = remote as Record<string, unknown>;
+    const base = JSON.parse(this.lastDiskJson) as Record<string, unknown>;
+    const baseValidation = validateDatabase(base.database, { salvage: true });
+    const basePrefs = TempoStore.readPreferences(base);
+    const remotePrefs = TempoStore.readPreferences(record);
+    const local = this.data;
+    const conflicts: MergeConflict[] = [];
+    const database = mergeDatabase(baseValidation.db, local.database, validation.db, conflicts);
+    const language = mergeSetting("language", basePrefs.language, local.language ?? "auto", remotePrefs.language, conflicts) ?? "auto";
+    const prefs = {
+      language,
+      defaultDest: mergeSetting("defaultDest", basePrefs.defaultDest, local.defaultDest ?? "inbox", remotePrefs.defaultDest, conflicts),
+      exportFolder: mergeSetting("exportFolder", basePrefs.exportFolder, local.exportFolder, remotePrefs.exportFolder, conflicts),
+      dailyCapacityMinutes: mergeSetting("dailyCapacityMinutes", basePrefs.dailyCapacityMinutes, local.dailyCapacityMinutes, remotePrefs.dailyCapacityMinutes, conflicts),
+    };
+    const copyPath = conflicts.length ? await this.keepConflictCopy(text) : null;
+
+    const locale = resolveLocale(language);
+    setActiveLocale(locale, resolveHant(language));
+    this.data = {
+      ...local,
+      ...prefs,
+      locale,
+      database,
+      focusLog: mergeFocusLog(local.focusLog, TempoStore.loadFocusLog(record.focusLog)),
+    };
+    // The merged result is what gets written next; the other side's file is the new common base.
+    this.lastDiskJson = canonicalJson(remote);
+    this.undoStack = [];
+    this.currentRevision++;
+    this.pendingSaveData = JSON.parse(JSON.stringify(this.data));
+    this.outsideMergeResult = copyPath ? "conflict" : "merged";
+    this.notify();
+    if (copyPath) {
+      const conflict: OutsideConflict = { titles: conflicts.map((c) => c.title), conflicts, copyPath };
+      this.lastOutsideConflict = conflict;
+      for (const listener of this.conflictListeners) {
+        try {
+          listener(conflict);
+        } catch (err) {
+          console.error("Error in outside conflict listener:", err);
+        }
+      }
+    }
+  }
+
+  /** Copies the other side's data.json next to ours before it is overwritten; throws when it cannot. */
+  private async keepConflictCopy(text: string): Promise<string> {
+    const adapter = this.adapter!;
+    const path = this.resolveDataFilePath()!;
+    const now = new Date();
+    const time = `${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+    let copyPath = `${path}.conflict-${TempoStore.dayStamp(now)}-${time}`;
+    for (let n = 2; await adapter.exists(copyPath); n++) copyPath = `${path}.conflict-${TempoStore.dayStamp(now)}-${time}-${n}`;
+    await adapter.write(copyPath, text);
+    if ((await adapter.read(copyPath)) !== text) throw new Error(lt("另一端的数据副本没能完整写入", "The copy of the other device's data could not be written"));
+    return copyPath;
+  }
+
   private async flushPending(): Promise<void> {
     try {
       while (this.pendingSaveData && this.currentRevision > this.savedRevision) {
+        await this.absorbOutsideChanges();
         const rev = this.currentRevision;
         const payload = this.pendingSaveData;
         this.saveStatus = "saving";

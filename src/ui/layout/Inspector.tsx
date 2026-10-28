@@ -15,6 +15,8 @@ interface InspectorProps {
   projects: Record<string, Project>;
   cycles: Record<string, Cycle>;
   subtasks: Task[];
+  /** Subtasks by parent, for estimates summed through every level. */
+  childrenMap: Map<string, Task[]>;
   onClose: () => void;
   onUpdateTask: (updates: Partial<Task>) => void;
   onDeleteTask: () => void;
@@ -91,6 +93,7 @@ export function Inspector({
   projects,
   cycles,
   subtasks,
+  childrenMap,
   onClose,
   onUpdateTask,
   onDeleteTask,
@@ -109,7 +112,7 @@ export function Inspector({
   const [estimateDraft, setEstimateDraft] = useState(task.estimateMinutes ? String(task.estimateMinutes) : "");
   const [nextStepDraft, setNextStepDraft] = useState(task.nextStep ?? "");
   const [outcomeDraft, setOutcomeDraft] = useState(task.outcomeLink ?? "");
-  const effort = getTaskEffort(task, subtasks);
+  const effort = getTaskEffort(task, childrenMap);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const today = getTodayString();
 
@@ -338,7 +341,10 @@ export function Inspector({
               its own number as well would plan the same work twice. */}
           <span className="tempo-property-label">{t("estimate", locale)}</span>
           {effort.fromSubtasks ? (
-            <span className="tempo-estimate-sum">{tf("estimateFromSubtasks", locale, { m: effort.minutes ?? 0 })}</span>
+            <span className="tempo-estimate-sum">
+              {tf("estimateFromSubtasks", locale, { m: effort.minutes })}
+              {effort.unestimated > 0 && ` · ${tf("estimateSubtasksUnknown", locale, { n: effort.unestimated })}`}
+            </span>
           ) : (
             <div className="tempo-estimate-field">
               <input

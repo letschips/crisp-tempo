@@ -956,6 +956,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               projects={db.projects}
               cycles={db.cycles}
               subtasks={selectedTaskSubtasks}
+              childrenMap={childrenMap}
               onClose={() => setSelectedTaskId(null)}
               onUpdateTask={handleUpdateTask}
               onDeleteTask={() => handleDeleteTask(selectedTask.id)}

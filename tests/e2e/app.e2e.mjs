@@ -1342,12 +1342,142 @@ await scenario('r8_external_change_reloads_in_place', async () => {
     const f = Object.keys(fixture.adapterFiles).find((k) => k.endsWith('/data.json'));
     fixture.adapterFiles[f] = JSON.stringify({ ...JSON.parse(JSON.stringify(tempoAudit.store.TempoStore.get(plugin).data)), exportFolder: 'elsewhere' });
   });
-  assert.equal(await reload(), 'deferred');
-  await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).flush());
+  assert.equal(await reload(), 'merged');
   const saved = JSON.parse((await files(p))[DATA_PATH]);
   assert.equal(saved.database.tasks['task-1'].title, 'Typed here');
+  assert.equal(saved.exportFolder, 'elsewhere', 'the outside change is kept as well');
   await close(p);
   return { ownWriteIgnored: true, appliedInPlace: true, damagedRefused: true, unsavedKept: true };
+});
+
+/* Round 9 — outside changes while this device has unsaved edits (audit F1). Failure modes:
+   - the other device's edit to a different task is overwritten by this device's whole snapshot;
+   - a late sync notification: the file changed but our next save writes over it anyway;
+   - both sides edit the same task (or one deletes it): one side silently disappears;
+   - the copy of the other side cannot be written, and the file is overwritten regardless. */
+await scenario('r9_outside_changes_are_merged_not_overwritten', async () => {
+  const p = await boot({ adapter: true, adapterRaw: 'fixture' });
+  const st = (fn) => p.evaluate(fn);
+  const local = (id, fields) => p.evaluate(({ id, fields }) => {
+    const s = tempoAudit.store.TempoStore.get(plugin);
+    s.updateDatabase((db) => {
+      const tasks = { ...db.tasks };
+      if (fields === null) delete tasks[id]; else tasks[id] = { ...tasks[id], ...fields };
+      return { ...db, tasks };
+    });
+    s.saveDebounced(10000); // stays unsaved until the step under test saves it
+  }, { id, fields });
+  const remote = (src) => p.evaluate((src) => {
+    const f = Object.keys(fixture.adapterFiles).find((k) => k.endsWith('/data.json'));
+    const d = JSON.parse(fixture.adapterFiles[f]);
+    new Function('d', src)(d);
+    fixture.adapterFiles[f] = JSON.stringify(d, null, 2);
+  }, src);
+  const reload = () => st(() => tempoAudit.store.TempoStore.get(plugin).reloadAfterExternalChange());
+  const disk = async () => JSON.parse((await files(p))[DATA_PATH]);
+  const copies = async () => Object.entries(await files(p)).filter(([k]) => k.includes('data.json.conflict-'));
+
+  // Different tasks on each side: both edits survive, no conflict copy.
+  await local('task-1', { title: 'Local A' });
+  await remote("d.database.tasks['task-3'].title = 'Remote B';");
+  assert.equal(await reload(), 'merged');
+  let d = await disk();
+  assert.deepEqual([d.database.tasks['task-1'].title, d.database.tasks['task-3'].title], ['Local A', 'Remote B']);
+  assert.equal(await st(() => tempoAudit.store.TempoStore.get(plugin).data.database.tasks['task-3'].title), 'Remote B', 'the view shows the other side too');
+  assert.equal((await copies()).length, 0);
+
+  // The notification never arrives: the next save still merges instead of overwriting.
+  await local('task-1', { title: 'Local A2' });
+  await remote("d.database.tasks['task-2'].title = 'Remote C'; delete d.database.tasks['task-4'];");
+  await st(() => tempoAudit.store.TempoStore.get(plugin).flush());
+  d = await disk();
+  assert.deepEqual([d.database.tasks['task-1'].title, d.database.tasks['task-2'].title, 'task-4' in d.database.tasks], ['Local A2', 'Remote C', false],
+    'an untouched task deleted elsewhere stays deleted');
+
+  // Focus time is append-only: sessions from both sides are kept.
+  await p.evaluate(() => {
+    const s = tempoAudit.store.TempoStore.get(plugin);
+    s.data = { ...s.data, focusLog: { 'task-1': [{ id: 'here', startedAt: 1, endedAt: 2, minutes: 5, completed: true, pomodoro: false }] } };
+    s.saveDebounced(10000);
+  });
+  await remote("d.focusLog = { 'task-1': [{ id: 'there', startedAt: 3, endedAt: 4, minutes: 7, completed: false, pomodoro: true }] };");
+  assert.equal(await reload(), 'merged');
+  assert.deepEqual((await disk()).focusLog['task-1'].map((e) => e.id).sort(), ['here', 'there']);
+
+  // Same task edited on both sides: this device wins, the other side is kept in a copy and reported.
+  await local('task-1', { title: 'Mine' });
+  await remote("d.database.tasks['task-1'].title = 'Theirs';");
+  assert.equal(await reload(), 'conflict');
+  d = await disk();
+  assert.equal(d.database.tasks['task-1'].title, 'Mine');
+  let kept = await copies();
+  assert.equal(kept.length, 1);
+  assert.equal(JSON.parse(kept[0][1]).database.tasks['task-1'].title, 'Theirs', 'the other version is recoverable');
+  const report = await st(() => tempoAudit.store.TempoStore.get(plugin).lastOutsideConflict);
+  assert.deepEqual(report.titles, ['Mine']);
+  assert.equal(report.copyPath, kept[0][0]);
+
+  // Edited here, deleted there: the task stays, the deletion is recoverable from the copy.
+  await local('task-2', { title: 'Still needed' });
+  await remote("delete d.database.tasks['task-2'];");
+  assert.equal(await reload(), 'conflict');
+  assert.equal((await disk()).database.tasks['task-2'].title, 'Still needed');
+  assert.equal((await copies()).length, 2);
+
+  // If the copy cannot be written, nothing is overwritten and the edit stays pending.
+  await local('task-1', { title: 'Mine again' });
+  await remote("d.database.tasks['task-1'].title = 'Theirs again';");
+  await p.evaluate(() => {
+    const a = plugin.app.vault.adapter; const write = a.write.bind(a);
+    a.write = async (path, data) => { if (path.includes('.conflict-')) throw new Error('disk full'); return write(path, data); };
+  });
+  await reload();
+  assert.equal((await disk()).database.tasks['task-1'].title, 'Theirs again', 'the other side is not overwritten');
+  assert.equal((await storeState(p)).saveStatus, 'error');
+  assert.equal(await st(() => tempoAudit.store.TempoStore.get(plugin).hasPendingSave), true);
+  await close(p);
+  return { differentTasksMerged: true, lateNoticeMerged: true, focusUnion: true, conflictCopied: 2, copyFailureBlocksWrite: true };
+});
+
+/* Round 9 — partly estimated subtasks (audit F2). Failure modes:
+   - one estimated subtask hides the others: the plan looks smaller than it is and nothing is flagged;
+   - unknown time is counted as 0, or a parent's own number is added on top of its parts;
+   - deeper subtasks, finished or canceled steps are counted wrongly. */
+await scenario('r9_partial_subtask_estimates_stay_visible', async () => {
+  const p = await boot();
+  await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).setDailyCapacity(60));
+  // The fixture's Primary Task is on Today and unestimated; give it a number so only the parent below counts.
+  await addTasks(p, [
+    { id: 'task-1', title: 'Primary Task', estimateMinutes: 10 },
+    { id: 'par', title: 'Parent', estimateMinutes: 120 },
+    { id: 'par-a', title: 'Step A', parentTaskId: 'par', estimateMinutes: 30 },
+    { id: 'par-b', title: 'Step B', parentTaskId: 'par' },
+  ]);
+  const line = () => p.locator('.tempo-capacity-line').innerText().then((t) => t.trim());
+  assert.equal(await line(), '已安排 40 / 60 分钟 · 1 项未估时', 'the unestimated step is flagged, not hidden');
+  await task(p, 'Parent');
+  assert.equal((await p.locator('.tempo-inspector-card .tempo-estimate-sum').innerText()).trim(), '子任务合计 30 分钟 · 1 个未估时');
+
+  // A deeper step with its own estimated part counts that part.
+  await addTasks(p, [{ id: 'par-b-1', title: 'Step B.1', parentTaskId: 'par-b', estimateMinutes: 15 }]);
+  assert.equal(await line(), '已安排 55 / 60 分钟');
+
+  // Finished steps keep their time but are never "unestimated"; canceled ones count for nothing.
+  await addTasks(p, [
+    { id: 'par-c', title: 'Step C', parentTaskId: 'par', status: 'done', completedAt: Date.now() },
+    { id: 'par-d', title: 'Step D', parentTaskId: 'par', status: 'canceled', canceledAt: Date.now(), estimateMinutes: 500 },
+    { id: 'par-e', title: 'Step E', parentTaskId: 'par' },
+  ]);
+  assert.equal(await line(), '已安排 55 / 60 分钟 · 1 项未估时');
+
+  // No step estimated: the parent's own number stands for the whole task.
+  await addTasks(p, [
+    { id: 'whole', title: 'Whole', estimateMinutes: 20 },
+    { id: 'whole-a', title: 'Whole A', parentTaskId: 'whole' },
+  ]);
+  assert.equal(await line(), '已安排 75 / 60 分钟 · 1 项未估时 · 超出 15 分钟');
+  await close(p);
+  return { flagged: true, nested: true, wholeTaskEstimate: true };
 });
 
 await scenario('no_uncaught_page_errors', async () => {

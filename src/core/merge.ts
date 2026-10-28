@@ -125,6 +125,8 @@ export function mergeAppleSettings(
     remindersEnabled: field("remindersEnabled"),
     reminderLists: field("reminderLists"),
     sendListId: field("sendListId"),
+    autoSend: field("autoSend"),
+    autoSendSince: field("autoSendSince"),
     calendarEnabled: field("calendarEnabled"),
     hiddenCalendars: field("hiddenCalendars"),
     links: Object.keys(links).length ? links : undefined,

@@ -2,6 +2,14 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.12.0] - 2026-10-28
+
+### Added
+- 设置新增「新建任务自动添加到提醒事项」：打开后新建的任务（不含子任务）自动放进提醒事项，打开前已有的任务不受影响。
+
+### Changed
+- 在提醒事项里删除已关联的提醒后，Tempo 记住这个任务不再同步，也不会被自动添加回去。
+
 ## [0.11.2] - 2026-10-28
 
 ### Fixed

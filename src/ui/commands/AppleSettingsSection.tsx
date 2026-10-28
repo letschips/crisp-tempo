@@ -148,6 +148,22 @@ export function AppleSettingsSection({ locale, runtime, settings, actions, licen
             </div>
           )}
 
+          <div className="tempo-settings-item" style={{ marginTop: 10 }}>
+            <div className="tempo-settings-label-group">
+              <span className="tempo-settings-item-title">{t("appleAutoSend", locale)}</span>
+              <span className="tempo-settings-item-desc">{t("appleAutoSendDesc", locale)}</span>
+            </div>
+            <Toggle
+              on={!!settings.autoSend}
+              busy={false}
+              label={t("appleAutoSend", locale)}
+              onChange={(on) => {
+                // Only tasks created from now on: turning it on never sends the existing ones.
+                onUpdateSettings((prev) => ({ ...prev, autoSend: on || undefined, autoSendSince: on ? Date.now() : undefined }));
+              }}
+            />
+          </div>
+
           <div className="tempo-apple-sync-row">
             <span className="tempo-settings-item-desc">
               {runtime.syncing

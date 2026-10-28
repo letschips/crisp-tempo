@@ -194,3 +194,39 @@ test("F6: no list chosen stays no list after turning Reminders off and on; a fir
   await fresh.controller.setEnabled("reminders", true);
   assert.deepEqual(fresh.store.data.apple.reminderLists, ["L1"]);
 });
+
+test("auto-add: a new task is added once; older ones, a deleted reminder's task and failures are not re-sent", async () => {
+  const fake = fakeReminders();
+  const since = Date.now() - 1000;
+  const { store, controller } = setup({
+    tasks: [task({ id: "old", createdAt: since - 5000 }), task({ id: "new", title: "新任务", createdAt: since + 10, dueDate: "2026-11-01" })],
+    apple: { reminderLists: [], autoSend: true, autoSendSince: since },
+  });
+  await controller.syncNow();
+  assert.equal(fake.reminders.size, 1);
+  const [created] = fake.reminders.values();
+  assert.equal(created.title, "新任务");
+  assert.equal(created.due, "2026-11-01");
+  assert.equal(store.data.apple.links.new.id, created.id);
+  assert.equal(store.data.apple.links.old, undefined, "a task from before the switch stays out");
+
+  await controller.syncNow();
+  assert.equal(fake.reminders.size, 1, "not added twice");
+
+  fake.reminders.delete(created.id);
+  await controller.syncNow();
+  await controller.syncNow();
+  assert.equal(fake.reminders.size, 0, "deleting the reminder does not bring it back");
+  assert.equal(store.data.apple.links.new.off, true);
+
+  // A failed add is tried again on a later sync, and linked once it works.
+  store.updateDatabase((db) => ({ ...db, tasks: { ...db.tasks, n2: task({ id: "n2", title: "第二个", createdAt: since + 20 }) } }), false);
+  let fail = true;
+  fake.hooks["apply-reminders"] = (req) => { if (fail && req.creates?.length) { fail = false; throw new Error("EventKit busy"); } };
+  await controller.syncNow();
+  assert.equal(store.data.apple.links.n2, undefined);
+  assert.equal(store.appleRuntime.lastSync.ok, false);
+  await controller.syncNow();
+  assert.ok(store.data.apple.links.n2 && !store.data.apple.links.n2.off);
+  assert.equal(fake.reminders.size, 1);
+});

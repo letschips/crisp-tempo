@@ -11,8 +11,8 @@ import type { Task, TodoDatabase } from "./types";
  * carries the values it was planned against, and the helper refuses it when the reminder changed
  * since (an edit on the phone between reading and writing); the next sync merges again.
  *
- * A link switched `off` (unlinked by the user, or a duplicate) no longer syncs but still holds the
- * reminder back from being imported again, like a link whose task was deleted.
+ * A link switched `off` (unlinked by the user, its reminder deleted, or a duplicate) no longer syncs
+ * but still holds the reminder back from being imported again, and the task from being added again.
  */
 
 export interface ReminderLink {
@@ -36,6 +36,9 @@ export interface AppleSettings {
   reminderLists?: string[];
   /** List that "Add to Reminders" puts a task in; unset means the system default list. */
   sendListId?: string;
+  /** Tasks created in Tempo from `autoSendSince` on are added to Reminders by themselves. */
+  autoSend?: boolean;
+  autoSendSince?: number;
   calendarEnabled?: boolean;
   /** Calendars left out of Today; every other calendar is shown. */
   hiddenCalendars?: string[];
@@ -228,10 +231,14 @@ export function planReminderSync(input: {
   for (const [taskId, link] of Object.entries(links)) {
     const reminder = byRequested.get(link.id);
     if (!reminder) {
-      // Deleted in Reminders: the task stays as it is and is no longer linked.
+      // Deleted in Reminders: the task stays as it is and stops syncing. Its link stays switched
+      // off while the task exists, so "add new tasks to Reminders" does not add it again.
       if (missing.has(link.id)) {
-        delete links[taskId];
-        unlinked++;
+        if (!tasks[taskId]) delete links[taskId];
+        else if (!link.off) {
+          links[taskId] = { ...link, off: true };
+          unlinked++;
+        }
       }
       continue;
     }
@@ -243,8 +250,9 @@ export function planReminderSync(input: {
     };
     const task = tasks[taskId];
     if (!task || link.off) {
-      // The task was deleted or unlinked in Tempo; the reminder is left alone. Once it is done, nothing is left to hold back.
-      if (reminder.completed) delete links[taskId];
+      // The task was deleted or unlinked in Tempo; the reminder is left alone. A deleted task's link
+      // goes once the reminder is done; an unlinked task's stays, so the task is never added again.
+      if (!task && reminder.completed) delete links[taskId];
       else links[taskId] = placed;
       continue;
     }
@@ -349,6 +357,25 @@ export function confirmUpdate(link: ReminderLink, update: ReminderUpdate): Remin
   return next;
 }
 
+/**
+ * Tasks to add to Reminders by themselves: top-level, open, created in Tempo since auto-add was
+ * turned on, never linked (an unlinked one keeps its switched-off link) and not imported from Reminders.
+ */
+export function autoSendCandidates(db: TodoDatabase, apple: AppleSettings): Task[] {
+  if (!apple.autoSend || !apple.autoSendSince) return [];
+  const since = apple.autoSendSince;
+  const links = apple.links ?? {};
+  return Object.values(db.tasks)
+    .filter((task) =>
+      !task.parentTaskId &&
+      (task.status === "todo" || task.status === "in_progress" || task.status === "waiting") &&
+      task.createdAt >= since &&
+      !links[task.id] &&
+      !task.sourceId?.startsWith(APPLE_SOURCE_PREFIX) &&
+      !!task.title.trim())
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
 /** The values a new link from a Tempo task starts from. */
 export function linkValuesOf(task: Task): Shared {
   return taskValues(task);
@@ -395,6 +422,8 @@ export function cleanAppleSettings(raw: unknown): AppleSettings | undefined {
     // An empty list is a choice ("import nothing") and is kept; only a missing one means "never chosen".
     ...(ids(raw.reminderLists) ? { reminderLists: ids(raw.reminderLists) } : {}),
     ...(typeof raw.sendListId === "string" && raw.sendListId ? { sendListId: raw.sendListId } : {}),
+    ...(raw.autoSend === true ? { autoSend: true } : {}),
+    ...(typeof raw.autoSendSince === "number" && raw.autoSendSince > 0 ? { autoSendSince: raw.autoSendSince } : {}),
     ...(raw.calendarEnabled === true ? { calendarEnabled: true } : {}),
     ...(ids(raw.hiddenCalendars)?.length ? { hiddenCalendars: ids(raw.hiddenCalendars) } : {}),
     ...(Object.keys(links).length ? { links } : {}),

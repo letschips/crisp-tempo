@@ -2,6 +2,7 @@ import { Notice, type Plugin } from "obsidian";
 import { TempoStore, type AppleAccess, type AppleCalendarInfo } from "../core/store";
 import type { Task } from "../core/types";
 import {
+  autoSendCandidates,
   confirmUpdate,
   linkValuesOf,
   newLink,
@@ -47,6 +48,8 @@ export class AppleSyncController {
   private linkedSeen = new Map<string, Task | undefined>();
   /** True while this controller writes to the store, so its own changes are not synced back. */
   private applying = false;
+  /** The tasks waiting to be added to Reminders by themselves, as last seen; a sync is scheduled when they change. */
+  private autoSendSeen = "";
   /** Syncs in a row that found reminders edited between reading and writing; bounded so it cannot loop. */
   private changedRetries = 0;
 
@@ -117,7 +120,10 @@ export class AppleSyncController {
     if (status.calendar === "fullAccess" && (settings.calendarEnabled || manual || !store.appleRuntime.calendars)) {
       await this.loadCalendars();
     }
-    if (settings.remindersEnabled && status.reminders === "fullAccess") await this.syncReminders(manual);
+    if (settings.remindersEnabled && status.reminders === "fullAccess") {
+      await this.syncReminders(manual);
+      await this.sendNewTasks();
+    }
     if (settings.calendarEnabled && status.calendar === "fullAccess") await this.loadTodayEvents();
     else if (store.appleRuntime.events) store.setAppleRuntime({ events: undefined, eventsDate: undefined });
   }
@@ -251,6 +257,43 @@ export class AppleSyncController {
     }
   }
 
+  /**
+   * "Add new tasks to Reminders": adds every waiting task in one helper call and links each one that
+   * was created. One that failed is tried again on the next sync. Quiet: no notice per task.
+   */
+  private async sendNewTasks(): Promise<void> {
+    const store = this.store;
+    const data = store.data;
+    if (!data?.apple?.remindersEnabled) return;
+    const tasks = autoSendCandidates(data.database, data.apple);
+    if (!tasks.length) return;
+    const values = new Map(tasks.map((task) => [task.id, linkValuesOf(task)]));
+    try {
+      const answer = await runAppleHelper<ApplyAnswer>(this.plugin, "apply-reminders", {
+        creates: tasks.map((task) => {
+          const v = values.get(task.id)!;
+          return { key: task.id, listId: data.apple?.sendListId ?? null, title: v.title, notes: v.notes, due: v.due };
+        }),
+      });
+      const failed = answer.creates.filter((c) => !c.ok);
+      this.apply((db, apple) => {
+        const links = { ...(apple.links ?? {}) };
+        for (const created of answer.creates) {
+          if (!created.ok || !created.reminder || links[created.key]) continue;
+          links[created.key] = newLink(created.reminder, values.get(created.key)!);
+        }
+        return { db, apple: { ...apple, links } };
+      });
+      if (failed.length) {
+        console.warn("Crisp Tempo: could not add new tasks to Reminders", failed);
+        store.setAppleRuntime({ lastSync: { ...(store.appleRuntime.lastSync ?? { at: Date.now() }), ok: false, message: failed[0].message ?? failed[0].code } });
+      }
+    } catch (err) {
+      console.warn("Crisp Tempo: could not add new tasks to Reminders", err);
+      store.setAppleRuntime({ lastSync: { at: Date.now(), ok: false, message: describe(err) } });
+    }
+  }
+
   /** Turning a source on asks macOS for access the first time; it stays off when access is refused. */
   private async setEnabled(kind: Kind, enabled: boolean): Promise<void> {
     const store = this.store;
@@ -350,14 +393,20 @@ export class AppleSyncController {
   /** Writes Tempo edits to linked tasks to Reminders shortly after they are made. */
   private watchLinkedTasks(): void {
     const data = this.store.data;
-    const links = data?.apple?.links;
-    if (this.applying || !data?.apple?.remindersEnabled || !links) return;
+    if (this.applying || !data?.apple?.remindersEnabled) return;
+    const links = data.apple.links ?? {};
     let changed = false;
     for (const id of Object.keys(links)) {
       if (this.linkedSeen.get(id) !== data.database.tasks[id]) {
         changed = true;
         break;
       }
+    }
+    // A new task to add by itself; the same waiting set (say, after a failed add) does not retrigger.
+    const waiting = autoSendCandidates(data.database, data.apple).map((task) => task.id).join();
+    if (waiting !== this.autoSendSeen) {
+      this.autoSendSeen = waiting;
+      if (waiting) changed = true;
     }
     if (!changed) return;
     this.rememberLinkedTasks();

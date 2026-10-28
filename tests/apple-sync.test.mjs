@@ -36,7 +36,7 @@ await esbuild.build({
   alias: { obsidian: stub },
 });
 const {
-  planReminderSync, confirmUpdate, cleanAppleSettings, busyMinutes, mergeAppleSettings, reminderSourceId,
+  planReminderSync, confirmUpdate, cleanAppleSettings, busyMinutes, mergeAppleSettings, reminderSourceId, autoSendCandidates,
 } = await import(pathToFileURL(path.join(outDir, "apple.mjs")).href);
 
 const T0 = 1_760_000_000_000;
@@ -140,8 +140,9 @@ test("an empty title in Reminders never blanks the task", () => {
 test("a deleted reminder only unlinks; a task deleted in Tempo is not imported again", () => {
   const gone = plan({ items: [], missing: ["R1"] });
   assert.equal(gone.db.tasks.t1.title, "写周报");
-  assert.equal(gone.links.t1, undefined);
+  assert.equal(gone.links.t1.off, true, "kept switched off so the task is not added to Reminders again");
   assert.equal(gone.unlinked, 1);
+  assert.equal(plan({ tasks: [], items: [], missing: ["R1"] }).links.t1, undefined, "nothing to remember once the task is gone too");
 
   const deleted = plan({ tasks: [], items: [reminder()], reminders: [reminder()] });
   assert.equal(deleted.imported, 0);
@@ -236,7 +237,7 @@ test("links from both devices survive a merge; a setting changed on one side is 
   assert.equal(removed.links, undefined, "a link removed on one side stays removed");
 });
 
-test("an unlinked task neither syncs nor comes back as a second task; it is let go once the reminder is done", () => {
+test("an unlinked task neither syncs nor comes back as a second task, also after its reminder is done", () => {
   const off = { t1: link({ off: true }) };
   const result = plan({
     tasks: [task({ title: "Tempo 改了", updatedAt: T0 + 9 })], links: off,
@@ -246,8 +247,9 @@ test("an unlinked task neither syncs nor comes back as a second task; it is let 
   assert.equal(result.db.tasks.t1.title, "Tempo 改了");
   assert.equal(result.imported, 0);
   assert.equal(result.links.t1.off, true);
-  assert.equal(plan({ links: off, items: [reminder({ completed: true })] }).links.t1, undefined);
-  assert.equal(plan({ links: off, missing: ["R1"] }).links.t1, undefined);
+  assert.equal(plan({ links: off, items: [reminder({ completed: true })] }).links.t1.off, true);
+  assert.equal(plan({ links: off, missing: ["R1"] }).links.t1.off, true);
+  assert.equal(plan({ tasks: [], links: off, items: [reminder({ completed: true })] }).links.t1, undefined);
 });
 
 test("two tasks linked to one reminder (two Macs imported it at once): the oldest keeps it, nothing is deleted", () => {
@@ -260,6 +262,22 @@ test("two tasks linked to one reminder (two Macs imported it at once): the oldes
   assert.equal(result.links.b.off, undefined);
   assert.deepEqual(Object.keys(result.db.tasks).sort(), ["a", "b"]);
   assert.deepEqual(result.updates.map((u) => u.taskId), ["b"], "only the kept task writes");
+});
+
+test("auto-add picks open top-level tasks created since it was turned on, never linked, not from Reminders", () => {
+  const since = T0 + 100;
+  const tasks = [
+    task({ id: "old", createdAt: T0 }),
+    task({ id: "new", createdAt: since + 1 }),
+    task({ id: "sub", createdAt: since + 2, parentTaskId: "new" }),
+    task({ id: "done", createdAt: since + 3, status: "done", completedAt: since + 4 }),
+    task({ id: "imported", createdAt: since + 5, sourceId: "apple-reminders:EXT-9" }),
+    task({ id: "unlinked", createdAt: since + 6 }),
+    task({ id: "pulse", createdAt: since + 7, sourceId: "crisp-pulse:abc" }),
+  ];
+  const apple = { autoSend: true, autoSendSince: since, links: { unlinked: link({ off: true }) } };
+  assert.deepEqual(autoSendCandidates(db(tasks), apple).map((t) => t.id), ["new", "pulse"]);
+  assert.deepEqual(autoSendCandidates(db(tasks), { ...apple, autoSend: undefined }), []);
 });
 
 test("busy minutes count overlaps once, clip to the day and skip all-day events", () => {

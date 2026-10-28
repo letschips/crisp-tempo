@@ -1697,6 +1697,12 @@ await scenario('r12_apple_reminders_calendar', async () => {
   assert.equal(await section.locator('.tempo-apple-option', { hasText: '节假日' }).count(), 0, 'calendar choices hide when off');
   await section.getByRole('switch', { name: '日历' }).click();
   await p.waitForFunction(() => fixture.disk.apple?.calendarEnabled === true);
+  // Auto-add starts from the moment it is turned on, and turning it off forgets that moment.
+  const beforeAuto = await p.evaluate(() => Date.now());
+  await section.getByRole('switch', { name: '新建任务自动添加到提醒事项' }).click();
+  await p.waitForFunction((t) => fixture.disk.apple?.autoSend === true && fixture.disk.apple.autoSendSince >= t, beforeAuto);
+  await section.getByRole('switch', { name: '新建任务自动添加到提醒事项' }).click();
+  await p.waitForFunction(() => !fixture.disk.apple?.autoSend && !fixture.disk.apple?.autoSendSince);
   await settingsDone(p);
 
   // Inspector: add, then unlink.

@@ -1,8 +1,11 @@
 import type { JSX } from "preact";
+import { getTaskEffort } from "../../core/selectors";
 import type { Project, Task, TaskStatus } from "../../core/types";
 import { formatDateDisplay, getTodayString, isOverdue } from "../../services/date-service";
-import { t, type Locale, type TranslationKey } from "../../services/i18n";
+import type { ActiveFocus } from "../../services/focus-bridge";
+import { t, tf, type Locale, type TranslationKey } from "../../services/i18n";
 import { PriorityIcon, StatusIcon } from "../icons/Icons";
+import { FOCUS_STATE_KEYS } from "../layout/Inspector";
 
 const STATUS_LABEL_KEYS: Record<TaskStatus, TranslationKey> = {
   todo: "statusTodo",
@@ -17,6 +20,10 @@ interface TaskRowProps {
   locale: Locale;
   project?: Project;
   subtasks?: Task[];
+  /** Subtasks by parent, for the estimate summed through every level. */
+  childrenMap?: Map<string, Task[]>;
+  /** What Crisp Focus is doing on this task, when it is the one being timed. */
+  focusState?: ActiveFocus["state"] | null;
   isSelected: boolean;
   onSelect: () => void;
   onToggleStatus: () => void;
@@ -27,6 +34,8 @@ export function TaskRow({
   locale,
   project,
   subtasks = [],
+  childrenMap,
+  focusState,
   isSelected,
   onSelect,
   onToggleStatus,
@@ -36,6 +45,11 @@ export function TaskRow({
   const isTaskToday = task.focusDate === today || task.dueDate === today || task.startDate === today;
   const overdue = !isDone && isOverdue(task.dueDate);
   const statusLabel = t(STATUS_LABEL_KEYS[task.status] ?? "statusTodo", locale);
+
+  // Open work shows what it needs next; finished rows stay quiet.
+  const open = task.status !== "done" && task.status !== "canceled";
+  const estimate = open ? getTaskEffort(task, childrenMap ?? new Map([[task.id, subtasks]])).minutes : 0;
+  const startsLater = open && !!task.startDate && task.startDate > today;
 
   // Subtask progress
   const doneSubtasks = subtasks.filter((s) => s.status === "done").length;
@@ -92,19 +106,26 @@ export function TaskRow({
       <PriorityIcon priority={task.priority} size={14} />
 
       {/* 3. Title */}
-      <div className="tempo-task-title" title={task.title}>
+      <div className="tempo-task-title" title={open && task.nextStep ? `${task.title}\n${t("nextStep", locale)}: ${task.nextStep}` : task.title}>
         {task.title}
+        {open && task.nextStep && <span className="tempo-task-next">{task.nextStep}</span>}
       </div>
+
+      {focusState && <span className={`tempo-row-focus is-${focusState}`}>{t(FOCUS_STATE_KEYS[focusState], locale)}</span>}
 
       {/* 4. Subtask Indicator */}
       {hasSubtasks && (
         <span
-          className="tempo-project-tag"
+          className="tempo-project-tag tempo-subtask-badge"
           style={{ fontSize: 10, padding: "1px 5px" }}
           title={`${doneSubtasks}/${subtasks.length} ${t("subtasks", locale)}`}
         >
           {doneSubtasks}/{subtasks.length}
         </span>
+      )}
+
+      {estimate > 0 && (
+        <span className="tempo-row-estimate" title={t("estimate", locale)}>{tf("estimateShort", locale, { m: estimate })}</span>
       )}
 
       {/* 5. Meta: Project Tag */}
@@ -115,6 +136,12 @@ export function TaskRow({
             style={{ backgroundColor: project.color || "var(--interactive-accent)" }}
           />
           <span>{project.title}</span>
+        </div>
+      )}
+
+      {startsLater && (
+        <div className="tempo-date-tag tempo-start-tag" data-label={t("startShort", locale)} title={`${t("planStartDate", locale)}: ${task.startDate}`}>
+          {formatDateDisplay(task.startDate, locale)}
         </div>
       )}
 

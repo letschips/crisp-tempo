@@ -587,7 +587,7 @@ await scenario('mobile_navigation_and_date_bounds', async () => {
     assert.ok(headerBoxes.brand.bottom <= headerBoxes.actions.top + 1, 'header overlap ' + JSON.stringify(headerBoxes));
     await p.screenshot({ path: out + '/mobile-' + width + '.png' });
     await p.locator('.tempo-header-actions .tempo-btn-primary').click();
-    await p.locator('.tempo-window-card .tempo-datepicker-trigger').click();
+    await p.locator('.tempo-window-card .tempo-window-prop-group:not(.tempo-start-date-field) .tempo-datepicker-trigger').click();
     const popup = await p.locator('.tempo-datepicker-popover').boundingBox();
     assert.ok(popup.x >= 0 && popup.x + popup.width <= width, 'popover outside ' + width + ': ' + JSON.stringify(popup));
     const dateBody = await p.locator('.tempo-window-body').boundingBox();
@@ -628,7 +628,7 @@ await scenario('pane_layout_and_modal_keyboard', async () => {
   await p.keyboard.press('Escape');
   assert.equal(await p.locator('.tempo-mobile-nav-modal').count(), 0);
   await p.locator('.tempo-header-actions .tempo-btn-primary').click();
-  await p.locator('.tempo-window-card .tempo-datepicker-trigger').click();
+  await p.locator('.tempo-window-card .tempo-window-prop-group:not(.tempo-start-date-field) .tempo-datepicker-trigger').click();
   const data = await p.evaluate(() => {
     const pop = document.querySelector('.tempo-datepicker-popover').getBoundingClientRect();
     const body = document.querySelector('.tempo-window-body').getBoundingClientRect();
@@ -657,10 +657,10 @@ await scenario('midnight_refresh', async () => {
 await scenario('mobile_calendar_quick_action', async () => {
   const p = await boot({ width: 320, height: 760, mobile: true, paneWidth: 320 });
   await p.locator('.tempo-header-actions .tempo-btn-primary').click();
-  await p.locator('.tempo-window-card .tempo-datepicker-trigger').click();
+  await p.locator('.tempo-window-card .tempo-window-prop-group:not(.tempo-start-date-field) .tempo-datepicker-trigger').click();
   await p.getByRole('button', { name: '明天', exact: true }).click();
   assert.equal(await p.locator('.tempo-datepicker-popover').count(), 0);
-  const value = await p.locator('.tempo-window-card .tempo-datepicker-label').textContent();
+  const value = await p.locator('.tempo-window-card .tempo-window-prop-group:not(.tempo-start-date-field) .tempo-datepicker-label').textContent();
   assert.match(value, /^\d{4}-\d{2}-\d{2}$/);
   await close(p);
   return { selected: value, footerAccessible: true };
@@ -907,10 +907,12 @@ await scenario('r5_subtask_can_be_deleted', async () => {
   });
   const p = await boot({ adapter: true, adapterRaw: raw });
   await task(p, 'Parent');
-  const row = p.locator('.tempo-subtask-item').filter({ hasText: 'Remove me' });
+  // Subtask titles are editable inputs, so rows are found by their value.
+  const row = p.locator('.tempo-subtask-item').nth(1);
+  assert.equal(await row.locator('.tempo-subtask-title-input').inputValue(), 'Remove me');
   await row.hover();
   await row.locator('.tempo-subtask-delete-btn').click();
-  const titles = await p.locator('.tempo-subtask-title').allTextContents();
+  const titles = await p.locator('.tempo-subtask-title-input').evaluateAll((els) => els.map((el) => el.value));
   assert.deepEqual(titles, ['Keep me']);
   assert.equal(await p.locator('.tempo-inspector-card').count(), 1, 'parent stays open');
   await p.locator('.tempo-subtask-item .tempo-status-btn').first().focus();
@@ -1478,6 +1480,106 @@ await scenario('r9_partial_subtask_estimates_stay_visible', async () => {
   assert.equal(await line(), '已安排 75 / 60 分钟 · 1 项未估时 · 超出 15 分钟');
   await close(p);
   return { flagged: true, nested: true, wholeTaskEstimate: true };
+});
+
+/* Round 10 — gaps between stored fields and the interface (Gemini audit). Failure modes:
+   - a subtask's estimate can only be set by editing data.json, so summed subtask estimates never happen;
+   - a typo in a subtask title means deleting and retyping it; an emptied title wipes it;
+   - the list never shows which task Focus is timing, how long a task should take, or its next step;
+   - a later start date can only be faked with a due date, so "when" and "deadline" are one field. */
+const dateFrom = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+await scenario('r10_subtask_title_and_estimate_are_editable', async () => {
+  const p = await boot();
+  await addTasks(p, [
+    { id: 'st-1', title: 'Sub one', parentTaskId: 'task-1' },
+    { id: 'st-2', title: 'Sub two', parentTaskId: 'task-1' },
+  ]);
+  await task(p, 'Primary Task');
+  const title = p.locator('.tempo-inspector-card .tempo-subtask-title-input').first();
+  await title.fill('Sub 1 fixed');
+  await title.press('Enter');
+  await p.waitForFunction(() => fixture.disk.database.tasks['st-1']?.title === 'Sub 1 fixed');
+  await title.fill('   ');
+  await title.blur();
+  assert.equal(await title.inputValue(), 'Sub 1 fixed', 'an emptied title snaps back');
+  assert.equal((await disk(p)).database.tasks['st-1'].title, 'Sub 1 fixed');
+
+  const est = p.locator('.tempo-inspector-card .tempo-subtask-item').first().locator('.tempo-subtask-estimate-input');
+  await est.fill('20');
+  await est.blur();
+  await p.waitForFunction(() => fixture.disk.database.tasks['st-1']?.estimateMinutes === 20);
+  assert.equal((await p.locator('.tempo-inspector-card .tempo-estimate-sum').innerText()).trim(), '子任务合计 20 分钟 · 1 个未估时');
+  assert.equal((await p.locator('.tempo-capacity-line').innerText()).trim(), '已安排 20 分钟 · 1 项未估时');
+  await est.fill('0');
+  await est.blur();
+  await p.waitForFunction(() => !('estimateMinutes' in fixture.disk.database.tasks['st-1']));
+  await close(p);
+  return { titleEdited: true, emptyReverted: true, subtaskEstimateSummed: true };
+});
+
+await scenario('r10_rows_show_focus_estimate_and_next_step', async () => {
+  const p = await boot();
+  await addTasks(p, [
+    { id: 'task-1', title: 'Primary Task', estimateMinutes: 45, nextStep: 'Call Ana' },
+    { id: 'row-done', title: 'Finished thing', status: 'done', completedAt: Date.now(), estimateMinutes: 30, nextStep: 'Old step' },
+  ]);
+  const row = (name) => p.locator('.tempo-task-row').filter({ hasText: name }).first();
+  assert.equal((await row('Primary Task').locator('.tempo-row-estimate').innerText()).trim(), '45 分钟');
+  assert.equal((await row('Primary Task').locator('.tempo-task-next').innerText()).trim(), 'Call Ana');
+  assert.equal(await row('Primary Task').locator('.tempo-row-focus').count(), 0);
+  await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).setActiveFocus({ taskId: 'task-1', state: 'running' }));
+  assert.equal((await row('Primary Task').locator('.tempo-row-focus').innerText()).trim(), '专注中');
+  await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).setActiveFocus({ taskId: 'task-1', state: 'paused' }));
+  assert.equal((await row('Primary Task').locator('.tempo-row-focus').innerText()).trim(), '已暂停');
+  assert.equal(await row('Finished thing').locator('.tempo-row-estimate, .tempo-task-next').count(), 0, 'finished rows stay quiet');
+  await close(p);
+
+  const m = await boot({ width: 390, height: 800, mobile: true, paneWidth: 390 });
+  await addTasks(m, [{ id: 'task-1', title: 'A rather long primary task title for a phone', estimateMinutes: 45, nextStep: 'Call Ana about the second draft' }]);
+  await m.evaluate(() => tempoAudit.store.TempoStore.get(plugin).setActiveFocus({ taskId: 'task-1', state: 'running' }));
+  const fit = await m.locator('.tempo-task-row').first().evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
+  assert.ok(fit.sw <= fit.cw + 1, `row overflows at 390px: ${JSON.stringify(fit)}`);
+  await close(m);
+  return { estimate: '45 分钟', focusStates: ['专注中', '已暂停'], mobileFit: fit };
+});
+
+await scenario('r10_start_date_is_separate_from_due_date', async () => {
+  const p = await boot();
+  const tomorrow = dateFrom(1);
+  await navTo(p, '随时可做');
+  await task(p, 'Plain Task');
+  await p.locator('.tempo-inspector-card .tempo-start-date-field .tempo-datepicker-trigger').click();
+  await p.getByRole('button', { name: '明天', exact: true }).click();
+  await p.waitForFunction((d) => fixture.disk.database.tasks['task-3'].startDate === d, tomorrow);
+  let t3 = (await disk(p)).database.tasks['task-3'];
+  assert.equal(t3.dueDate, undefined, 'the deadline is not touched');
+  assert.equal(t3.focusDate, undefined);
+  assert.equal(await p.locator('.tempo-inspector-card .tempo-when-select').inputValue(), 'scheduled');
+  await navTo(p, '接下来');
+  const up = p.locator('.tempo-task-row').filter({ hasText: 'Plain Task' });
+  assert.equal(await up.count(), 1, 'a later start puts it on Upcoming');
+  assert.equal((await up.locator('.tempo-start-tag').innerText()).trim(), '明天');
+  await navTo(p, '随时可做');
+  assert.equal(await p.locator('.tempo-main-card .tempo-task-row').filter({ hasText: 'Plain Task' }).count(), 0, 'and takes it off Anytime');
+
+  // Choosing a list again drops the start date.
+  await navTo(p, '接下来');
+  await task(p, 'Plain Task');
+  await p.locator('.tempo-inspector-card .tempo-when-select').selectOption('today');
+  await p.waitForFunction(() => !('startDate' in fixture.disk.database.tasks['task-3']) && !!fixture.disk.database.tasks['task-3'].focusDate);
+
+  // New tasks can be scheduled for later without a deadline.
+  await p.locator('.tempo-header-actions .tempo-btn-primary').click();
+  await p.locator('.tempo-window-input-title').fill('Start later');
+  await p.locator('.tempo-window-card .tempo-start-date-field .tempo-datepicker-trigger').click();
+  await p.getByRole('button', { name: '明天', exact: true }).click();
+  await p.locator('.tempo-window-input-title').press('Enter');
+  await p.waitForFunction(() => Object.values(fixture.disk.database.tasks).some((t) => t.title === 'Start later'));
+  const created = Object.values((await disk(p)).database.tasks).find((t) => t.title === 'Start later');
+  assert.deepEqual([created.startDate, created.dueDate, created.focusDate, created.triage], [tomorrow, undefined, undefined, 'processed']);
+  await close(p);
+  return { inspectorStart: tomorrow, upcoming: true, clearedByWhen: true, createWithStart: true };
 });
 
 await scenario('no_uncaught_page_errors', async () => {

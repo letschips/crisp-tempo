@@ -10,6 +10,8 @@ interface DatePickerPopoverProps {
   onChange: (dateStr: string | undefined) => void;
   placement?: "top" | "bottom" | "auto";
   align?: "left" | "right" | "auto";
+  /** Shown while no date is set; defaults to "select a date". */
+  placeholder?: string;
 }
 
 export function DatePickerPopover({
@@ -18,6 +20,7 @@ export function DatePickerPopover({
   onChange,
   placement = "auto",
   align = "auto",
+  placeholder,
 }: DatePickerPopoverProps): JSX.Element {
   const [isOpen, setIsOpen] = useState(false);
   const openRef = useRef(false);
@@ -254,7 +257,7 @@ export function DatePickerPopover({
         <span className="tempo-datepicker-trigger-left">
           <CalendarIcon size={13} className="tempo-datepicker-icon" />
           <span className="tempo-datepicker-label">
-            {value ? value : t("selectDate", locale)}
+            {value ? value : placeholder ?? t("selectDate", locale)}
           </span>
         </span>
 

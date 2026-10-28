@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 import { getProgress } from "../../core/selectors";
 import type { Project, Task } from "../../core/types";
+import type { ActiveFocus } from "../../services/focus-bridge";
 import { t, tf, type Locale } from "../../services/i18n";
 import { PlusIcon } from "../icons/Icons";
 import { TaskRow } from "./TaskRow";
@@ -21,6 +22,7 @@ interface GenericListViewProps {
   onBackToToday?: () => void;
   /** Opens the edit dialog of the project or cycle on screen. */
   onEdit?: () => void;
+  activeFocus?: ActiveFocus | null;
 }
 
 export function GenericListView({
@@ -37,6 +39,7 @@ export function GenericListView({
   onOpenQuickAdd,
   onBackToToday,
   onEdit,
+  activeFocus,
 }: GenericListViewProps): JSX.Element {
 
   const { done: doneCount, total: progressTotal, pct: progressPct } = getProgress(tasks);
@@ -141,6 +144,8 @@ export function GenericListView({
               locale={locale}
               project={task.projectId ? projects[task.projectId] : undefined}
               subtasks={childrenMap.get(task.id) ?? []}
+                    childrenMap={childrenMap}
+                    focusState={activeFocus?.taskId === task.id ? activeFocus.state : null}
               isSelected={selectedTaskId === task.id}
               onSelect={() => onSelectTask(task.id)}
               onToggleStatus={() => onToggleStatus(task.id)}

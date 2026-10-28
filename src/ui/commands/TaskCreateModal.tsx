@@ -27,6 +27,7 @@ export interface TaskCreateModalProps {
     availability: "anytime" | "someday";
     priority: TaskPriority;
     focusDate?: string;
+    startDate?: string;
     dueDate?: string;
     projectId?: string;
     cycleId?: string;
@@ -49,6 +50,7 @@ export function TaskCreateModal({
   const [projectId, setProjectId] = useState<string>(defaultProjectId || "");
   const [priority, setPriority] = useState<TaskPriority>("none");
   const [dueDate, setDueDate] = useState<string | undefined>(undefined);
+  const [startDate, setStartDate] = useState<string | undefined>(undefined);
 
   const titleInputRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -75,10 +77,13 @@ export function TaskCreateModal({
     onAddTask({
       title: trimmed,
       description: description.trim() || undefined,
-      triage: dest === "today" ? "processed" : "inbox",
+      // A planned start is a decision about when, so the task skips the inbox; on or after that
+      // day it is on Today without needing a focus date.
+      triage: dest === "today" || startDate ? "processed" : "inbox",
       availability: "anytime",
       priority,
-      focusDate: dest === "today" ? getTodayString() : undefined,
+      focusDate: dest === "today" && !startDate ? getTodayString() : undefined,
+      startDate,
       dueDate,
       projectId: projectId || undefined,
       cycleId: defaultCycleId,
@@ -216,13 +221,24 @@ export function TaskCreateModal({
               </select>
             </div>
 
-            {/* Due Date Trigger */}
+            {/* Planned start and deadline are separate dates */}
+            <div className="tempo-window-prop-group tempo-start-date-field">
+              <DatePickerPopover
+                value={startDate}
+                locale={locale}
+                placement="top"
+                align="auto"
+                placeholder={t("planStartDate", locale)}
+                onChange={(date) => setStartDate(date)}
+              />
+            </div>
             <div className="tempo-window-prop-group">
               <DatePickerPopover
                 value={dueDate}
                 locale={locale}
                 placement="top"
                 align="auto"
+                placeholder={t("dueDate", locale)}
                 onChange={(date) => setDueDate(date)}
               />
             </div>

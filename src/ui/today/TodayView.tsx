@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 import type { DayCapacity } from "../../core/selectors";
 import type { Project, Task } from "../../core/types";
+import type { ActiveFocus } from "../../services/focus-bridge";
 import { formatHeaderDate } from "../../services/date-service";
 import { t, tf, type Locale } from "../../services/i18n";
 import { PlusIcon, TodayIcon } from "../icons/Icons";
@@ -18,6 +19,7 @@ interface TodayViewProps {
   onToggleStatus: (taskId: string) => void;
   onOpenQuickAdd: () => void;
   capacity?: DayCapacity;
+  activeFocus?: ActiveFocus | null;
 }
 
 /** "已安排 110 / 100 分钟 · 1 项未估时 · 超出 10 分钟"; hidden until something is estimated or budgeted. */
@@ -50,6 +52,7 @@ export function TodayView({
   onToggleStatus,
   onOpenQuickAdd,
   capacity,
+  activeFocus,
 }: TodayViewProps): JSX.Element {
   const inProgressTasks = tasks.filter((t) => t.status === "in_progress");
   const todoTasks = tasks.filter((t) => t.status === "todo");
@@ -105,6 +108,8 @@ export function TodayView({
                     locale={locale}
                     project={task.projectId ? projects[task.projectId] : undefined}
                     subtasks={childrenMap.get(task.id) ?? []}
+                    childrenMap={childrenMap}
+                    focusState={activeFocus?.taskId === task.id ? activeFocus.state : null}
                     isSelected={selectedTaskId === task.id}
                     onSelect={() => onSelectTask(task.id)}
                     onToggleStatus={() => onToggleStatus(task.id)}
@@ -127,6 +132,8 @@ export function TodayView({
                     locale={locale}
                     project={task.projectId ? projects[task.projectId] : undefined}
                     subtasks={childrenMap.get(task.id) ?? []}
+                    childrenMap={childrenMap}
+                    focusState={activeFocus?.taskId === task.id ? activeFocus.state : null}
                     isSelected={selectedTaskId === task.id}
                     onSelect={() => onSelectTask(task.id)}
                     onToggleStatus={() => onToggleStatus(task.id)}
@@ -149,6 +156,8 @@ export function TodayView({
                     locale={locale}
                     project={task.projectId ? projects[task.projectId] : undefined}
                     subtasks={childrenMap.get(task.id) ?? []}
+                    childrenMap={childrenMap}
+                    focusState={activeFocus?.taskId === task.id ? activeFocus.state : null}
                     isSelected={selectedTaskId === task.id}
                     onSelect={() => onSelectTask(task.id)}
                     onToggleStatus={() => onToggleStatus(task.id)}
@@ -171,6 +180,8 @@ export function TodayView({
                     locale={locale}
                     project={task.projectId ? projects[task.projectId] : undefined}
                     subtasks={childrenMap.get(task.id) ?? []}
+                    childrenMap={childrenMap}
+                    focusState={activeFocus?.taskId === task.id ? activeFocus.state : null}
                     isSelected={selectedTaskId === task.id}
                     onSelect={() => onSelectTask(task.id)}
                     onToggleStatus={() => onToggleStatus(task.id)}

@@ -753,6 +753,69 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   flex-shrink: 0 !important;
 }
 
+/* The next step trails the title in a fainter tone and is the first thing cut off. */
+.tempo-task-next {
+  margin-left: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.tempo-task-next::before {
+  content: "→ ";
+}
+
+.tempo-row-focus {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-accent);
+  background-color: color-mix(in srgb, var(--tempo-ui-accent) 14%, transparent);
+}
+
+.tempo-row-focus.is-paused,
+.tempo-row-focus.is-waiting {
+  color: var(--text-muted);
+  background-color: color-mix(in srgb, var(--text-normal) 7%, transparent);
+}
+
+.tempo-row-focus.is-break {
+  color: var(--color-green);
+  background-color: color-mix(in srgb, var(--color-green) 12%, transparent);
+}
+
+.tempo-row-estimate {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tempo-start-tag {
+  color: var(--text-muted);
+}
+
+.tempo-start-tag::before {
+  content: attr(data-label);
+  color: var(--text-faint);
+}
+
+/* Narrow panes keep the title readable: the next step and estimate live in the inspector and the
+   capacity line, and the small badges never get squeezed into fragments. */
+@container tempo-pane (max-width: 680px) {
+  .tempo-task-next,
+  .tempo-row-estimate { display: none; }
+}
+.is-phone .tempo-task-next,
+.is-phone .tempo-row-estimate { display: none; }
+.tempo-task-row > svg,
+.tempo-task-row .tempo-priority-badge,
+.tempo-task-row .tempo-row-focus { flex-shrink: 0; }
+.tempo-task-row .tempo-subtask-badge { flex-shrink: 0 !important; overflow: visible !important; }
+
 .tempo-date-tag.is-today {
   color: var(--tempo-ui-accent);
   font-weight: 500;
@@ -1320,8 +1383,40 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   font-size: 12px;
 }
 
-.tempo-subtask-title {
+/* Reads as plain text until it is focused for editing. Themes style every text input, so the
+   unfocused look needs !important to win, as with .tempo-property-source. */
+.tempo-inspector-card .tempo-subtask-title-input {
+  all: unset;
+  box-sizing: border-box;
   flex: 1;
+  min-width: 0;
+  padding: 2px 4px !important;
+  margin-left: -4px;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 5px !important;
+  color: var(--text-normal);
+  font-family: inherit !important;
+  font-size: 12px !important;
+  height: auto !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tempo-inspector-card .tempo-subtask-title-input:focus {
+  background: color-mix(in srgb, var(--text-normal) 6%, transparent) !important;
+  outline: 1px solid var(--tempo-ui-accent);
+}
+
+.tempo-subtask-item .tempo-subtask-estimate-input {
+  width: 52px;
+  flex: 0 0 auto;
+  padding: 2px 6px !important;
+  font-size: 11px !important;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* Subtask checkbox and delete control are real buttons for keyboard access; strip the
@@ -1367,7 +1462,7 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   .tempo-subtask-delete-btn { opacity: 1; }
 }
 
-.tempo-subtask-title.is-done {
+.tempo-subtask-title-input.is-done {
   text-decoration: line-through;
   color: var(--text-faint);
 }

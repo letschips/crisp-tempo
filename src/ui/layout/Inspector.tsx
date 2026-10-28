@@ -23,6 +23,7 @@ interface InspectorProps {
   onAddSubtask: (title: string, parentTaskId?: string) => void;
   onToggleSubtask: (subtaskId: string) => void;
   onDeleteSubtask: (subtaskId: string) => void;
+  onUpdateSubtask: (subtaskId: string, updates: Partial<Task>) => void;
   /** Creating subtasks needs a license; editing existing ones does not. */
   canAddSubtask?: boolean;
   onRequestLicense?: () => void;
@@ -40,7 +41,7 @@ interface InspectorProps {
   };
 }
 
-const FOCUS_STATE_KEYS = {
+export const FOCUS_STATE_KEYS = {
   running: "focusStateRunning",
   paused: "focusStatePaused",
   break: "focusStateBreak",
@@ -81,6 +82,58 @@ function FocusSection({ taskId, focus, locale }: { taskId: string; focus: NonNul
   );
 }
 
+/** Parses typed minutes: zero, negative or non-numeric input clears the estimate. */
+function parseMinutes(raw: string): number | undefined {
+  const minutes = Math.round(Number(raw.trim()));
+  return raw.trim() && isWholeMinutes(minutes) ? minutes : undefined;
+}
+
+/** A subtask's title and estimate, edited in place and saved on blur or Enter. */
+function SubtaskFields({ subtask, locale, onUpdate }: { subtask: Task; locale: Locale; onUpdate: (updates: Partial<Task>) => void }): JSX.Element {
+  const [title, setTitle] = useState(subtask.title);
+  const [estimate, setEstimate] = useState(subtask.estimateMinutes ? String(subtask.estimateMinutes) : "");
+  useLayoutEffect(() => setTitle(subtask.title), [subtask.id, subtask.title]);
+  useLayoutEffect(() => setEstimate(subtask.estimateMinutes ? String(subtask.estimateMinutes) : ""), [subtask.id, subtask.estimateMinutes]);
+  const blurOnEnter = (e: KeyboardEvent) => {
+    if (e.isComposing || (e as any).keyCode === 229) return;
+    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+  };
+  return (
+    <>
+      <input
+        type="text"
+        className={`tempo-subtask-title-input ${subtask.status === "done" ? "is-done" : ""}`}
+        value={title}
+        aria-label={t("subtasks", locale)}
+        onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
+        onBlur={(e) => {
+          const next = (e.target as HTMLInputElement).value.trim();
+          if (!next) setTitle(subtask.title);
+          else if (next !== subtask.title) onUpdate({ title: next });
+        }}
+        onKeyDown={blurOnEnter}
+      />
+      <input
+        type="number"
+        inputMode="numeric"
+        min={1}
+        step={5}
+        className="tempo-property-input tempo-subtask-estimate-input"
+        value={estimate}
+        placeholder={t("minutesUnit", locale)}
+        aria-label={`${t("estimate", locale)}: ${subtask.title}`}
+        onInput={(e) => setEstimate((e.target as HTMLInputElement).value)}
+        onBlur={(e) => {
+          const next = parseMinutes((e.target as HTMLInputElement).value);
+          setEstimate(next ? String(next) : "");
+          if (next !== subtask.estimateMinutes) onUpdate({ estimateMinutes: next });
+        }}
+        onKeyDown={blurOnEnter}
+      />
+    </>
+  );
+}
+
 /** "Pulse 速记 · 2026-10-09 速记" for Pulse memos, otherwise the note's name. */
 function sourceLabel(task: Task, locale: Locale): string {
   const name = (task.notePath ?? "").split("/").pop()?.replace(/\.md$/i, "") ?? "";
@@ -100,6 +153,7 @@ export function Inspector({
   onAddSubtask,
   onToggleSubtask,
   onDeleteSubtask,
+  onUpdateSubtask,
   canAddSubtask = true,
   onRequestLicense,
   onOpenSource,
@@ -115,6 +169,7 @@ export function Inspector({
   const effort = getTaskEffort(task, childrenMap);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const today = getTodayString();
+  const startsLater = !!task.startDate && task.startDate > today;
 
   // Reset the subtask draft only when a different task is opened.
   useLayoutEffect(() => {
@@ -136,8 +191,7 @@ export function Inspector({
 
   // Zero, negative or non-numeric input clears the estimate instead of storing it.
   const commitEstimate = (raw: string) => {
-    const minutes = Math.round(Number(raw.trim()));
-    const next = raw.trim() && isWholeMinutes(minutes) ? minutes : undefined;
+    const next = parseMinutes(raw);
     setEstimateDraft(next ? String(next) : "");
     if (next !== task.estimateMinutes) onUpdateTask({ estimateMinutes: next });
   };
@@ -285,34 +339,57 @@ export function Inspector({
               Anytime a no-op, because the select value did not change. */}
           <span className="tempo-property-label">{t("when", locale)}</span>
           <select
-            className="tempo-property-select"
+            className="tempo-property-select tempo-when-select"
             value={
               task.triage === "inbox"
                 ? "inbox"
                 : task.availability === "someday"
                 ? "someday"
-                : task.focusDate && task.focusDate <= today
+                : startsLater
+                ? "scheduled"
+                : (task.focusDate && task.focusDate <= today) || (task.startDate && task.startDate <= today)
                 ? "today"
                 : "anytime"
             }
             onChange={(e) => {
+              // Picking a list replaces any planned start; the start date row sets one.
               const val = (e.target as HTMLSelectElement).value;
               if (val === "inbox") {
-                onUpdateTask({ focusDate: undefined, triage: "inbox" });
+                onUpdateTask({ focusDate: undefined, startDate: undefined, triage: "inbox" });
               } else if (val === "today") {
-                onUpdateTask({ focusDate: today, availability: "anytime", triage: "processed" });
+                onUpdateTask({ focusDate: today, startDate: undefined, availability: "anytime", triage: "processed" });
               } else if (val === "someday") {
-                onUpdateTask({ focusDate: undefined, availability: "someday", triage: "processed" });
-              } else {
-                onUpdateTask({ focusDate: undefined, availability: "anytime", triage: "processed" });
+                onUpdateTask({ focusDate: undefined, startDate: undefined, availability: "someday", triage: "processed" });
+              } else if (val === "anytime") {
+                onUpdateTask({ focusDate: undefined, startDate: undefined, availability: "anytime", triage: "processed" });
               }
             }}
           >
             <option value="inbox">{t("inbox", locale)}</option>
             <option value="today">{t("whenToday", locale)}</option>
+            {startsLater && <option value="scheduled">{t("whenScheduled", locale)}</option>}
             <option value="anytime">{t("whenAnytime", locale)}</option>
             <option value="someday">{t("whenSomeday", locale)}</option>
           </select>
+
+          {/* Planned start, separate from the deadline: a later date moves the task to Upcoming
+              and it comes back to Today on that day. */}
+          <span className="tempo-property-label">{t("planStartDate", locale)}</span>
+          <div className="tempo-start-date-field">
+            <DatePickerPopover
+              value={task.startDate}
+              locale={locale}
+              align="right"
+              placement="auto"
+              onChange={(d) =>
+                onUpdateTask(
+                  d
+                    ? { startDate: d, triage: "processed", availability: "anytime", focusDate: d > today ? undefined : task.focusDate }
+                    : { startDate: undefined },
+                )
+              }
+            />
+          </div>
 
           {/* Cycle Sprint */}
           <span className="tempo-property-label">{t("cycle", locale)}</span>
@@ -461,11 +538,7 @@ export function Inspector({
                 >
                   <StatusIcon status={st.status} size={13} />
                 </button>
-                <span
-                  className={`tempo-subtask-title ${st.status === "done" ? "is-done" : ""}`}
-                >
-                  {st.title}
-                </span>
+                <SubtaskFields subtask={st} locale={locale} onUpdate={(updates) => onUpdateSubtask(st.id, updates)} />
                 <button
                   type="button"
                   className="tempo-subtask-delete-btn"

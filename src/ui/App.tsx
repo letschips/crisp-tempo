@@ -373,16 +373,15 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
   };
 
   // Update task attributes
-  const handleUpdateTask = (updates: Partial<Task>) => {
-    if (!selectedTaskId) return;
+  const handleUpdateTaskById = (taskId: string, updates: Partial<Task>) => {
     store.updateDatabase((prev) => {
-      const t = prev.tasks[selectedTaskId];
+      const t = prev.tasks[taskId];
       if (!t) return prev;
       return {
         ...prev,
         tasks: {
           ...prev.tasks,
-          [selectedTaskId]: {
+          [taskId]: {
             ...t,
             ...updates,
             updatedAt: Date.now(),
@@ -390,6 +389,10 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
         },
       };
     });
+  };
+
+  const handleUpdateTask = (updates: Partial<Task>) => {
+    if (selectedTaskId) handleUpdateTaskById(selectedTaskId, updates);
   };
 
   // Delete task and its subtasks
@@ -419,6 +422,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
     availability?: "anytime" | "someday";
     priority?: TaskPriority;
     focusDate?: string;
+    startDate?: string;
     dueDate?: string;
     projectId?: string;
     cycleId?: string;
@@ -439,6 +443,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
       projectId: params.projectId,
       cycleId: params.cycleId,
       focusDate: params.focusDate,
+      startDate: params.startDate,
       dueDate: params.dueDate,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -905,6 +910,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               onToggleStatus={handleToggleStatus}
               onOpenQuickAdd={openQuickAdd}
               capacity={capacity}
+              activeFocus={storeState.activeFocus}
             />
           ) : (
             <GenericListView
@@ -938,6 +944,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               onToggleStatus={handleToggleStatus}
               onOpenQuickAdd={openQuickAdd}
               onBackToToday={() => setActiveNav("today")}
+              activeFocus={storeState.activeFocus}
               onEdit={
                 activeNav.startsWith("proj:") && db.projects[activeNav.slice(5)]
                   ? () => setEditingProjectId(activeNav.slice(5))
@@ -963,6 +970,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               onAddSubtask={handleAddSubtask}
               onToggleSubtask={handleToggleStatus}
               onDeleteSubtask={handleDeleteTask}
+              onUpdateSubtask={handleUpdateTaskById}
               canAddSubtask={storeState.data.licenseStatus === "valid"}
               onRequestLicense={promptForLicense}
               onOpenSource={(notePath) => void plugin.app.workspace.openLinkText(notePath, "", false)}

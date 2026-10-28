@@ -5,6 +5,7 @@ import { t, tf, type LanguageSetting, type Locale } from "../../services/i18n";
 import type { LicensePayload, LicenseVerifyResult } from "../../services/license";
 import { installDialogFocus } from "../components/dialog-focus";
 import { CloseIcon, SettingsIcon, TempoLogoIcon } from "../icons/Icons";
+import { AppleSettingsSection, type AppleSettingsSectionProps } from "./AppleSettingsSection";
 
 export interface SettingsModalProps {
   isOpen: boolean;
@@ -32,6 +33,8 @@ export interface SettingsModalProps {
   onExportData: (customFolder?: string) => Promise<string>;
   onActivateLicense?: (key: string) => Promise<LicenseVerifyResult>;
   onClearLicense?: () => Promise<void>;
+  /** Reminders and Calendar; only on desktop macOS. */
+  apple?: Omit<AppleSettingsSectionProps, "locale">;
 }
 
 export function SettingsModal({
@@ -58,6 +61,7 @@ export function SettingsModal({
   onExportData,
   onActivateLicense,
   onClearLicense,
+  apple,
 }: SettingsModalProps): JSX.Element | null {
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
@@ -269,6 +273,8 @@ export function SettingsModal({
               </div>
             </div>
           </div>
+
+          {apple && <AppleSettingsSection locale={locale} {...apple} />}
 
           {/* Section: Software License & Activation */}
           <div className="tempo-settings-section" style={{ marginTop: 20 }}>

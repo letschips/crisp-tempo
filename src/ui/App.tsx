@@ -18,6 +18,7 @@ import {
   getWaitingTasks,
   sortByStatus,
 } from "../core/selectors";
+import { busyMinutes } from "../core/apple-sync";
 import { FOCUS_WRAP_UP_HOURS, TempoStore } from "../core/store";
 import type { Cycle, Project, Task, TaskPriority, TaskStatus, TodoDatabase } from "../core/types";
 import { getTodayString } from "../services/date-service";
@@ -62,6 +63,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
     data: store.data,
     activeFocus: store.activeFocus,
     focusWrapUp: store.focusWrapUp,
+    apple: store.appleRuntime,
   });
 
   const [storeState, setStoreState] = useState(snapshot);
@@ -194,6 +196,14 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
   // the visible list actually changes.
   const database = storeState.data?.database ?? null;
   const dailyCapacity = storeState.data?.dailyCapacityMinutes;
+  // Today's Calendar events, once loaded for today (they are dropped when Calendar is turned off).
+  const todayEvents = storeState.apple.eventsDate === today ? storeState.apple.events : undefined;
+  const eventMinutes = useMemo(() => {
+    if (!todayEvents) return 0;
+    const start = new Date(`${today}T00:00:00`);
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1);
+    return busyMinutes(todayEvents, start.getTime(), end.getTime());
+  }, [todayEvents, today]);
   const derived = useMemo(() => {
     if (!database) return null;
     const allTasks = database.tasks;
@@ -222,9 +232,9 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
       childrenMap,
       counts: getNavCounts(allTasks, today),
       kpi: getKpiStats(allTasks, today),
-      capacity: activeNav === "today" ? getDayCapacity(visibleTasks, childrenMap, dailyCapacity) : undefined,
+      capacity: activeNav === "today" ? getDayCapacity(visibleTasks, childrenMap, dailyCapacity, eventMinutes) : undefined,
     };
-  }, [database, activeNav, today, dailyCapacity]);
+  }, [database, activeNav, today, dailyCapacity, eventMinutes]);
 
   // Keyboard shortcuts. The window listener is a single fixed hook installed before the
   // loading/error early returns, so the hook order never changes between renders; each ready
@@ -934,6 +944,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               onOpenQuickAdd={openQuickAdd}
               capacity={capacity}
               activeFocus={storeState.activeFocus}
+              events={todayEvents}
             />
           ) : (
             <GenericListView
@@ -997,6 +1008,15 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               canAddSubtask={storeState.data.licenseStatus === "valid"}
               onRequestLicense={promptForLicense}
               onOpenSource={(notePath) => void plugin.app.workspace.openLinkText(notePath, "", false)}
+              reminder={
+                store.appleActions && storeState.data.apple?.remindersEnabled && storeState.apple.reminders === "fullAccess"
+                  ? {
+                      link: storeState.data.apple.links?.[selectedTask.id],
+                      onAdd: () => void store.appleActions?.sendTask(selectedTask.id),
+                      onUnlink: () => store.appleActions?.unlinkTask(selectedTask.id),
+                    }
+                  : undefined
+              }
               onOpenOutcome={(link) => {
                 void openOutcomeLink(plugin.app, link).then((missing) => {
                   if (missing !== null) new Notice(tf("outcomeMissing", locale, { name: missing }));
@@ -1107,6 +1127,17 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
             licensePayload={storeState.data?.licensePayload}
             onActivateLicense={(key) => store.activateLicense(key)}
             onClearLicense={() => store.clearLicense()}
+            apple={
+              store.appleActions && storeState.apple.available
+                ? {
+                    runtime: storeState.apple,
+                    settings: storeState.data.apple ?? {},
+                    actions: store.appleActions,
+                    licensed: storeState.data.licenseStatus === "valid",
+                    onUpdateSettings: (updater) => store.updateAppleSettings(updater),
+                  }
+                : undefined
+            }
           />
         )}
 

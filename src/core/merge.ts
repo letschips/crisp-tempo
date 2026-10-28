@@ -1,5 +1,6 @@
 import type { TodoDatabase } from "./types";
 import { addFocusEntry, type FocusLog } from "../services/focus-bridge";
+import type { AppleSettings, ReminderLink } from "./apple-sync";
 
 /**
  * Three-way merge of data.json when another device (a sync service) changed it while this device
@@ -97,5 +98,37 @@ export function mergeFocusLog(local: FocusLog | undefined, remote: FocusLog | un
     for (const entry of entries) out = addFocusEntry(out, taskId, entry);
   }
   for (const taskId of Object.keys(out)) out[taskId] = [...out[taskId]].sort((a, b) => a.endedAt - b.endedAt);
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * Reminders and Calendar settings merge like plain settings; reminder links merge one task at a
+ * time. A link only records what the last sync agreed on, so when both sides changed one, this
+ * device's is kept without reporting a conflict: the next sync compares it against the reminder again.
+ */
+export function mergeAppleSettings(
+  base: AppleSettings | undefined,
+  local: AppleSettings | undefined,
+  remote: AppleSettings | undefined,
+  conflicts: MergeConflict[],
+): AppleSettings | undefined {
+  const field = <K extends Exclude<keyof AppleSettings, "links">>(key: K) =>
+    mergeSetting(`apple.${key}`, base?.[key], local?.[key], remote?.[key], conflicts);
+  const links: Record<string, ReminderLink> = {};
+  const localLinks = local?.links ?? {};
+  const remoteLinks = remote?.links ?? {};
+  for (const id of new Set([...Object.keys(localLinks), ...Object.keys(remoteLinks)])) {
+    const { value } = pick(base?.links?.[id], localLinks[id], remoteLinks[id]);
+    if (value !== undefined) links[id] = value;
+  }
+  const out: AppleSettings = {
+    remindersEnabled: field("remindersEnabled"),
+    reminderLists: field("reminderLists"),
+    sendListId: field("sendListId"),
+    calendarEnabled: field("calendarEnabled"),
+    hiddenCalendars: field("hiddenCalendars"),
+    links: Object.keys(links).length ? links : undefined,
+  };
+  for (const key of Object.keys(out) as (keyof AppleSettings)[]) if (out[key] === undefined) delete out[key];
   return Object.keys(out).length ? out : undefined;
 }

@@ -1624,6 +1624,116 @@ await scenario('r11_focus_wrap_up_card', async () => {
   return { saved: true, dismissedWithoutWrite: true, staleHidden: true };
 });
 
+/* r12 macOS Reminders and Calendar (0.11.0), with a fake bridge in place of the EventKit helper.
+   Failure modes:
+   - the section or the Today events show where there is no bridge (mobile, other systems);
+   - meetings are not counted against the daily capacity, or overlaps count twice;
+   - choosing a list or calendar is not saved;
+   - "Add to Reminders" / "Unlink" do not reach the bridge, or the row shows for finished tasks;
+   - the events list widens the board on a phone. */
+await scenario('r12_apple_reminders_calendar', async () => {
+  const p = await boot();
+  await p.locator('.tempo-header-actions').getByRole('button', { name: '设置' }).click();
+  assert.equal(await p.locator('.tempo-apple-section').count(), 0, 'no section without the bridge');
+  await settingsDone(p);
+
+  await addTasks(p, [
+    { id: 'ap-1', title: 'Write report', estimateMinutes: 60 },
+    { id: 'ap-done', title: 'Finished thing', status: 'done', completedAt: Date.now() },
+  ]);
+  await p.evaluate(() => {
+    const s = tempoAudit.store.TempoStore.get(plugin);
+    window.__appleCalls = [];
+    s.setDailyCapacity(120);
+    const today = new Date();
+    const at = (h, m = 0) => new Date(today.getFullYear(), today.getMonth(), today.getDate(), h, m).getTime();
+    s.appleActions = {
+      setEnabled: async (kind, on) => {
+        __appleCalls.push(['setEnabled', kind, on]);
+        s.updateAppleSettings((prev) => ({ ...prev, [kind === 'reminders' ? 'remindersEnabled' : 'calendarEnabled']: on }));
+      },
+      openPrivacySettings: (kind) => __appleCalls.push(['privacy', kind]),
+      syncNow: async () => { __appleCalls.push(['sync']); },
+      sendTask: async (taskId) => {
+        __appleCalls.push(['send', taskId]);
+        s.applyAppleSync((db, apple) => ({ db, apple: { ...apple, links: { ...(apple.links ?? {}), [taskId]: {
+          id: 'R-' + taskId, listId: 'L1', listTitle: '工作', title: db.tasks[taskId].title, notes: '', due: null, completed: false } } } }));
+      },
+      unlinkTask: (taskId) => {
+        __appleCalls.push(['unlink', taskId]);
+        s.updateAppleSettings((prev) => { const links = { ...prev.links }; delete links[taskId]; return { ...prev, links }; });
+      },
+    };
+    const d = today;
+    s.setAppleRuntime({
+      available: true, reminders: 'fullAccess', calendar: 'fullAccess',
+      reminderLists: [{ id: 'L1', title: '工作', color: '#ff9500' }, { id: 'L2', title: '家里', color: '#34c759' }],
+      calendars: [{ id: 'C1', title: '日程', color: '#007aff' }, { id: 'C2', title: '节假日', color: '#8e8e93' }],
+      events: [
+        { id: 'e0', title: '国庆假期', start: at(0), end: at(24), allDay: true, calendarId: 'C2' },
+        { id: 'e1', title: 'Standup', start: at(9), end: at(10), allDay: false, calendarId: 'C1', color: '#007aff' },
+        { id: 'e2', title: 'A very long design review title that should be truncated on a phone screen', start: at(9, 30), end: at(11), allDay: false, calendarId: 'C1', color: '#007aff' },
+      ],
+      eventsDate: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+    });
+    s.updateAppleSettings((prev) => ({ ...prev, remindersEnabled: true, calendarEnabled: true, reminderLists: ['L1'] }));
+  });
+
+  assert.equal(await p.locator('.tempo-event-row').count(), 3);
+  assert.equal((await p.locator('.tempo-event-row').first().locator('.tempo-event-time').innerText()).trim(), '全天');
+  const line = (await p.locator('.tempo-capacity-line').innerText()).trim();
+  assert.equal(line, '已安排 60 / 120 分钟 · 日程 120 分钟 · 1 项未估时 · 超出 60 分钟', 'overlapping meetings count once, all-day none');
+
+  // Settings: lists and calendars are saved.
+  await p.locator('.tempo-header-actions').getByRole('button', { name: '设置' }).click();
+  const section = p.locator('.tempo-apple-section');
+  assert.equal(await section.count(), 1);
+  await section.locator('.tempo-apple-option', { hasText: '家里' }).locator('input').check();
+  await p.waitForFunction(() => (fixture.disk.apple?.reminderLists ?? []).join() === 'L1,L2');
+  await section.locator('.tempo-apple-option', { hasText: '节假日' }).locator('input').uncheck();
+  await p.waitForFunction(() => (fixture.disk.apple?.hiddenCalendars ?? []).join() === 'C2');
+  await section.getByRole('switch', { name: '日历' }).click();
+  await p.waitForFunction(() => fixture.disk.apple?.calendarEnabled !== true);
+  assert.equal(await section.locator('.tempo-apple-option', { hasText: '节假日' }).count(), 0, 'calendar choices hide when off');
+  await section.getByRole('switch', { name: '日历' }).click();
+  await p.waitForFunction(() => fixture.disk.apple?.calendarEnabled === true);
+  await settingsDone(p);
+
+  // Inspector: add, then unlink.
+  await p.locator('.tempo-task-row', { hasText: 'Write report' }).click();
+  await p.locator('.tempo-inspector-card .tempo-reminder-add').click();
+  await p.waitForFunction(() => fixture.disk.apple?.links?.['ap-1']?.id === 'R-ap-1');
+  assert.equal((await p.locator('.tempo-inspector-card .tempo-reminder-list').innerText()).trim(), '工作');
+  await p.locator('.tempo-inspector-card').getByRole('button', { name: '取消关联' }).click();
+  await p.waitForFunction(() => !fixture.disk.apple?.links?.['ap-1']);
+  await p.locator('.tempo-task-row', { hasText: 'Finished thing' }).click();
+  assert.equal(await p.locator('.tempo-inspector-card .tempo-reminder-row').count(), 0, 'nothing to add for a finished task');
+  const calls = await p.evaluate(() => __appleCalls.map((c) => c[0]));
+  assert.ok(calls.includes('send') && calls.includes('unlink') && calls.includes('setEnabled') && calls.includes('sync'));
+  await close(p);
+
+  // Phone: the events list fits.
+  const m = await boot({ width: 390, height: 844, mobile: true });
+  await m.evaluate(() => {
+    const s = tempoAudit.store.TempoStore.get(plugin);
+    const t = new Date();
+    s.appleActions = { setEnabled: async () => {}, openPrivacySettings() {}, syncNow: async () => {}, sendTask: async () => {}, unlinkTask() {} };
+    s.setAppleRuntime({
+      available: true, calendar: 'fullAccess',
+      events: [{ id: 'e2', title: 'A very long design review title that should be truncated on a phone screen', start: t.getTime(), end: t.getTime() + 3600e3, allDay: false }],
+      eventsDate: `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`,
+    });
+  });
+  const fit = await m.evaluate(() => {
+    const scroll = document.querySelector('.tempo-task-scroll');
+    const row = document.querySelector('.tempo-event-row');
+    return { sw: scroll.scrollWidth, cw: scroll.clientWidth, row: !!row };
+  });
+  assert.ok(fit.row && fit.sw <= fit.cw, JSON.stringify(fit));
+  await close(m);
+  return { events: 3, capacity: line, saved: true, linkFlow: true, mobileFit: fit };
+});
+
 await scenario('no_uncaught_page_errors', async () => {
   assert.deepEqual(pageErrors, [], 'the UI must not throw during any scenario');
   return { pageErrors: pageErrors.length };

@@ -5,7 +5,8 @@ import type { Area, Cycle, Label, Project, Task, TodoDatabase } from "./types";
 import type { LicensePayload, LicenseVerifyResult } from "../services/license";
 import { inheritVaultCrispLicense, verifyLicenseCode } from "../services/license";
 import { addFocusEntry, cleanFocusLog, type ActiveFocus, type FocusEntry, type FocusLog } from "../services/focus-bridge";
-import { mergeDatabase, mergeFocusLog, mergeSetting, type MergeConflict } from "./merge";
+import { mergeAppleSettings, mergeDatabase, mergeFocusLog, mergeSetting, type MergeConflict } from "./merge";
+import { cleanAppleSettings, type AppleSettings, type CalendarEvent } from "./apple-sync";
 
 export interface TempoPluginData {
   schemaVersion: number;
@@ -24,6 +25,45 @@ export interface TempoPluginData {
   database: TodoDatabase;
   /** Crisp Focus sessions spent on each task. Outside `database`, so undo never removes them. */
   focusLog?: FocusLog;
+  /** macOS Reminders and Calendar: what to sync and the reminders linked to tasks. */
+  apple?: AppleSettings;
+}
+
+export type AppleAccess = "notDetermined" | "restricted" | "denied" | "fullAccess" | "writeOnly" | "unknown";
+
+export interface AppleCalendarInfo {
+  id: string;
+  title: string;
+  color?: string;
+  source?: string;
+}
+
+/** What the Reminders and Calendar bridge knows right now. Runtime only, never saved. */
+export interface AppleRuntime {
+  /** This device can run the helper (desktop macOS). */
+  available: boolean;
+  reminders?: AppleAccess;
+  calendar?: AppleAccess;
+  reminderLists?: AppleCalendarInfo[];
+  defaultListId?: string;
+  calendars?: AppleCalendarInfo[];
+  /** Today's events, for `eventsDate`. */
+  events?: CalendarEvent[];
+  eventsDate?: string;
+  syncing?: boolean;
+  lastSync?: { at: number; ok: boolean; message?: string; imported?: number; pulled?: number; pushed?: number };
+  /** Set when the helper could not be started or answered with an error. */
+  error?: string;
+}
+
+/** Calls into the bridge, installed by the plugin on desktop macOS. Absent elsewhere and in tests. */
+export interface AppleActions {
+  /** Turning one on asks macOS for access when it has not been decided. */
+  setEnabled(kind: "reminders" | "calendar", enabled: boolean): Promise<void>;
+  openPrivacySettings(kind: "reminders" | "calendar"): void;
+  syncNow(): Promise<void>;
+  sendTask(taskId: string): Promise<void>;
+  unlinkTask(taskId: string): void;
 }
 
 export type StoreLoadStatus = "loading" | "ready" | "error";
@@ -320,6 +360,9 @@ export class TempoStore {
   private focusWrapUpState: FocusWrapUp | null = null;
   /** The Tempo task Crisp Focus is working on now. Runtime only, never saved. */
   private activeFocusState: ActiveFocus | null = null;
+  private appleRuntimeState: AppleRuntime = { available: false };
+  /** Installed by the plugin on desktop macOS. */
+  public appleActions: AppleActions | null = null;
 
   public static get(plugin: Plugin): TempoStore {
     let instance = TempoStore.instances.get(plugin);
@@ -528,6 +571,7 @@ export class TempoStore {
         ? (record.licensePayload as any)
         : undefined,
       focusLog: TempoStore.loadFocusLog(record.focusLog),
+      apple: cleanAppleSettings(record.apple),
       licenseLastVerified:
         typeof record.licenseLastVerified === "number"
           ? record.licenseLastVerified
@@ -673,6 +717,7 @@ export class TempoStore {
       locale,
       database: validation.db,
       focusLog: TempoStore.loadFocusLog(record.focusLog),
+      apple: cleanAppleSettings(record.apple),
     };
     // Undo snapshots predate the outside change; stepping back would silently revert it.
     this.undoStack = [];
@@ -1029,6 +1074,43 @@ export class TempoStore {
     this.notify();
   }
 
+  public get appleRuntime(): AppleRuntime {
+    return this.appleRuntimeState;
+  }
+
+  public setAppleRuntime(patch: Partial<AppleRuntime>): void {
+    this.appleRuntimeState = { ...this.appleRuntimeState, ...patch };
+    this.notify();
+  }
+
+  public updateAppleSettings(updater: (prev: AppleSettings) => AppleSettings): void {
+    if (!this.data) return;
+    const prev = this.data.apple ?? {};
+    const next = cleanAppleSettings(updater(prev));
+    this.data = { ...this.data, apple: next };
+    this.notify();
+    this.saveDebounced();
+  }
+
+  /**
+   * Applies a Reminders sync in one save: tasks changed from Reminders (never undoable) and the
+   * links. When tasks changed, earlier undo snapshots would put the old values back and the next
+   * sync would write them to Reminders, so the undo history is cleared as on an outside change.
+   */
+  public applyAppleSync(
+    updater: (db: TodoDatabase, apple: AppleSettings) => { db: TodoDatabase; apple: AppleSettings } | null,
+  ): boolean {
+    if (this.status !== "ready" || !this.data) return false;
+    const result = updater(this.data.database, this.data.apple ?? {});
+    if (!result) return false;
+    const dbChanged = result.db !== this.data.database;
+    this.data = { ...this.data, database: result.db, apple: cleanAppleSettings(result.apple) };
+    if (dbChanged) this.undoStack = [];
+    this.notify();
+    this.saveDebounced();
+    return true;
+  }
+
   public setExportFolder(exportFolder: string): void {
     if (!this.data) return;
     const trimmed = exportFolder.trim();
@@ -1176,6 +1258,7 @@ export class TempoStore {
       exportFolder: mergeSetting("exportFolder", basePrefs.exportFolder, local.exportFolder, remotePrefs.exportFolder, conflicts),
       dailyCapacityMinutes: mergeSetting("dailyCapacityMinutes", basePrefs.dailyCapacityMinutes, local.dailyCapacityMinutes, remotePrefs.dailyCapacityMinutes, conflicts),
     };
+    const apple = mergeAppleSettings(cleanAppleSettings(base.apple), local.apple, cleanAppleSettings(record.apple), conflicts);
     const copyPath = conflicts.length ? await this.keepConflictCopy(text) : null;
 
     const locale = resolveLocale(language);
@@ -1186,6 +1269,7 @@ export class TempoStore {
       locale,
       database,
       focusLog: mergeFocusLog(local.focusLog, TempoStore.loadFocusLog(record.focusLog)),
+      apple,
     };
     // The merged result is what gets written next; the other side's file is the new common base.
     this.lastDiskJson = canonicalJson(remote);

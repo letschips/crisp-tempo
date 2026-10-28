@@ -1,4 +1,5 @@
 import type { JSX } from "preact";
+import type { ReminderLink } from "../../core/apple-sync";
 import { useLayoutEffect, useState } from "preact/hooks";
 import { getTaskEffort } from "../../core/selectors";
 import { isWholeMinutes } from "../../core/store";
@@ -29,6 +30,8 @@ interface InspectorProps {
   onRequestLicense?: () => void;
   /** Opens the note a task came from (set by tasks created from another plugin, e.g. Pulse memos). */
   onOpenSource?: (notePath: string) => void;
+  /** The task's macOS reminder: shown while Reminders sync is on, on desktop macOS. */
+  reminder?: { link?: ReminderLink; onAdd: () => void; onUnlink: () => void };
   /** Opens the task's outcome note or URL. */
   onOpenOutcome?: (link: string) => void;
   /** Crisp Focus time on this task. Hidden when Focus is not installed and nothing was recorded. */
@@ -159,6 +162,7 @@ export function Inspector({
   onOpenSource,
   onOpenOutcome,
   focus,
+  reminder,
 }: InspectorProps): JSX.Element {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [titleDraft, setTitleDraft] = useState(task.title);
@@ -491,6 +495,24 @@ export function Inspector({
             </>
           )}
         </div>
+
+        {reminder && (reminder.link || (task.status !== "done" && task.status !== "canceled" && !task.parentTaskId)) && (
+          <div className="tempo-property-grid tempo-reminder-row">
+            <span className="tempo-property-label">{t("appleLinked", locale)}</span>
+            {reminder.link ? (
+              <div className="tempo-reminder-linked">
+                <span className="tempo-reminder-list">{reminder.link.listTitle ?? ""}</span>
+                <button type="button" className="tempo-action-btn" onClick={reminder.onUnlink}>
+                  {t("appleUnlink", locale)}
+                </button>
+              </div>
+            ) : (
+              <button type="button" className="tempo-action-btn tempo-reminder-add" onClick={reminder.onAdd}>
+                {t("appleAddToReminders", locale)}
+              </button>
+            )}
+          </div>
+        )}
 
         {focus && <FocusSection taskId={task.id} focus={focus} locale={locale} />}
 

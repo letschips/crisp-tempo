@@ -1,5 +1,6 @@
 import type { JSX } from "preact";
 import type { DayCapacity } from "../../core/selectors";
+import type { CalendarEvent } from "../../core/apple-sync";
 import type { Project, Task } from "../../core/types";
 import type { ActiveFocus } from "../../services/focus-bridge";
 import { formatHeaderDate } from "../../services/date-service";
@@ -20,12 +21,14 @@ interface TodayViewProps {
   onOpenQuickAdd: () => void;
   capacity?: DayCapacity;
   activeFocus?: ActiveFocus | null;
+  /** Today's Calendar events; absent when Calendar is off or unavailable. */
+  events?: CalendarEvent[];
 }
 
 /** "已安排 110 / 100 分钟 · 1 项未估时 · 超出 10 分钟"; hidden until something is estimated or budgeted. */
 function CapacityLine({ capacity, locale }: { capacity: DayCapacity; locale: Locale }): JSX.Element | null {
-  const { plannedMinutes, unestimated, capacityMinutes, overMinutes } = capacity;
-  if (!capacityMinutes && plannedMinutes === 0) return null;
+  const { plannedMinutes, unestimated, capacityMinutes, eventMinutes, overMinutes } = capacity;
+  if (!capacityMinutes && plannedMinutes === 0 && eventMinutes === 0) return null;
   return (
     <div className="tempo-capacity-line">
       <span>
@@ -33,10 +36,38 @@ function CapacityLine({ capacity, locale }: { capacity: DayCapacity; locale: Loc
           ? tf("capacityPlannedOf", locale, { m: plannedMinutes, cap: capacityMinutes })
           : tf("capacityPlanned", locale, { m: plannedMinutes })}
       </span>
+      {eventMinutes > 0 && <span>{" · "}{tf("capacityEvents", locale, { m: eventMinutes })}</span>}
       {unestimated > 0 && <span>{" · "}{tf("capacityUnestimated", locale, { n: unestimated })}</span>}
       {overMinutes > 0 && (
         <span>{" · "}<span className="tempo-capacity-over">{tf("capacityOver", locale, { m: overMinutes })}</span></span>
       )}
+    </div>
+  );
+}
+
+const clock = (ms: number, locale: Locale) =>
+  new Date(ms).toLocaleTimeString(locale === "zh" ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+
+/** Read-only list of today's events from macOS Calendar; past ones are dimmed. */
+function TodayEvents({ events, locale }: { events: CalendarEvent[]; locale: Locale }): JSX.Element {
+  const now = Date.now();
+  return (
+    <div className="tempo-today-events" style={{ marginBottom: 14 }}>
+      <div className="tempo-group-header">
+        <span>{t("todayEvents", locale)}</span>
+        <span className="tempo-group-count">{events.length}</span>
+      </div>
+      {events.map((event) => (
+        <div key={`${event.id}-${event.start}`} className={`tempo-event-row ${!event.allDay && event.end <= now ? "is-past" : ""}`}>
+          <span className="tempo-event-bar" style={event.color ? { background: event.color } : undefined} />
+          <span className="tempo-event-time">
+            {event.allDay ? t("allDay", locale) : `${clock(event.start, locale)}–${clock(event.end, locale)}`}
+          </span>
+          <span className="tempo-event-title" title={event.calendarTitle ? `${event.title} · ${event.calendarTitle}` : event.title}>
+            {event.title}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -53,6 +84,7 @@ export function TodayView({
   onOpenQuickAdd,
   capacity,
   activeFocus,
+  events,
 }: TodayViewProps): JSX.Element {
   const inProgressTasks = tasks.filter((t) => t.status === "in_progress");
   const todoTasks = tasks.filter((t) => t.status === "todo");
@@ -87,6 +119,7 @@ export function TodayView({
 
       {/* Task List */}
       <div className="tempo-task-scroll">
+        {events && events.length > 0 && <TodayEvents events={events} locale={locale} />}
         {tasks.length === 0 ? (
           <div className="tempo-empty-state">
             <TodayIcon size={36} className="tempo-empty-icon" />

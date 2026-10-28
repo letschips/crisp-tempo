@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.letschips.crisp-tempo.apple-helper</string>
+  <key>CFBundleName</key>
+  <string>Crisp Tempo Apple Helper</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1</string>
+  <key>NSRemindersUsageDescription</key>
+  <string>Crisp Tempo syncs tasks with your reminders.</string>
+  <key>NSRemindersFullAccessUsageDescription</key>
+  <string>Crisp Tempo syncs tasks with your reminders.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>Crisp Tempo shows today's events next to your tasks.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Crisp Tempo shows today's events next to your tasks.</string>
+</dict>
+</plist>

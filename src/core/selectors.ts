@@ -137,6 +137,8 @@ export interface DayCapacity {
   /** Open Today tasks and subtasks whose time is unknown; never counted as zero minutes. */
   unestimated: number;
   capacityMinutes?: number;
+  /** Minutes of today's timed Calendar events; they take from the capacity too. */
+  eventMinutes: number;
   /** How far the plan exceeds the capacity; 0 when it fits or no capacity is set. */
   overMinutes: number;
 }
@@ -179,6 +181,7 @@ export function getDayCapacity(
   todayTasks: Task[],
   childrenMap: Map<string, Task[]>,
   capacityMinutes?: number,
+  eventMinutes = 0,
 ): DayCapacity {
   let plannedMinutes = 0;
   let unestimated = 0;
@@ -188,8 +191,8 @@ export function getDayCapacity(
     plannedMinutes += effort.minutes;
     unestimated += effort.unestimated;
   }
-  const overMinutes = capacityMinutes ? Math.max(0, plannedMinutes - capacityMinutes) : 0;
-  return { plannedMinutes, unestimated, capacityMinutes, overMinutes };
+  const overMinutes = capacityMinutes ? Math.max(0, plannedMinutes + eventMinutes - capacityMinutes) : 0;
+  return { plannedMinutes, unestimated, capacityMinutes, eventMinutes, overMinutes };
 }
 
 /**

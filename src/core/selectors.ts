@@ -79,6 +79,37 @@ export function isCompletedToday(task: Task, today = getTodayString()): boolean 
   return task.focusDate === today || task.dueDate === today;
 }
 
+export interface CompletedTaskSummary {
+  id: string;
+  title: string;
+  completedAt: number;
+  /** For a subtask, the task it belongs to. */
+  parentTitle?: string;
+  projectTitle?: string;
+}
+
+/**
+ * Every task and subtask finished on a local calendar day (YYYY-MM-DD), oldest first, by the same
+ * rule as the "completed today" list. Canceled and deleted tasks are not included.
+ */
+export function getCompletedOn(db: Pick<TodoDatabase, "tasks" | "projects">, date: string): CompletedTaskSummary[] {
+  return Object.values(db.tasks)
+    .filter((task) => isCompletedToday(task, date))
+    .map((task) => {
+      const parent = task.parentTaskId ? db.tasks[task.parentTaskId] : undefined;
+      const projectId = task.projectId ?? parent?.projectId;
+      const project = projectId ? db.projects[projectId] : undefined;
+      return {
+        id: task.id,
+        title: task.title,
+        completedAt: task.completedAt ?? 0,
+        ...(parent ? { parentTitle: parent.title } : {}),
+        ...(project ? { projectTitle: project.title } : {}),
+      };
+    })
+    .sort((a, b) => a.completedAt - b.completedAt);
+}
+
 /**
  * Tasks for Today view:
  * 1. Active (todo/in_progress/waiting) tasks triaged and scheduled for today.

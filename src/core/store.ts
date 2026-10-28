@@ -27,6 +27,16 @@ export interface TempoPluginData {
 }
 
 export type StoreLoadStatus = "loading" | "ready" | "error";
+
+/** Shown for a few hours after a focus session on a task ends; never saved. */
+export interface FocusWrapUp {
+  taskId: string;
+  minutes: number;
+  completed: boolean;
+  endedAt: number;
+}
+
+export const FOCUS_WRAP_UP_HOURS = 3;
 export type StoreSaveStatus = "idle" | "saving" | "saved" | "error";
 
 /** A single rejected entry, reported so the user can see what is wrong before deciding. */
@@ -306,6 +316,8 @@ export class TempoStore {
   private outsideMergeResult: "merged" | "conflict" | null = null;
   public lastOutsideConflict: OutsideConflict | null = null;
   private conflictListeners = new Set<(conflict: OutsideConflict) => void>();
+  /** A focus session that just ended on a task, offering to note the next step. Runtime only. */
+  private focusWrapUpState: FocusWrapUp | null = null;
   /** The Tempo task Crisp Focus is working on now. Runtime only, never saved. */
   private activeFocusState: ActiveFocus | null = null;
 
@@ -988,6 +1000,22 @@ export class TempoStore {
     await this.flush();
     if (this.hasPendingSave) throw new Error(lt(`Crisp Tempo 保存失败：${this.saveError ?? "未知原因"}`, `Crisp Tempo failed to save: ${this.saveError ?? "unknown reason"}`));
     return added;
+  }
+
+  public get focusWrapUp(): FocusWrapUp | null {
+    return this.focusWrapUpState;
+  }
+
+  /** Offers to note the next step for the task a live focus session just ended on (not for caught-up ones). */
+  public offerFocusWrapUp(taskId: string, entry: FocusEntry): void {
+    this.focusWrapUpState = { taskId, minutes: entry.minutes, completed: entry.completed, endedAt: entry.endedAt };
+    this.notify();
+  }
+
+  public dismissFocusWrapUp(): void {
+    if (!this.focusWrapUpState) return;
+    this.focusWrapUpState = null;
+    this.notify();
   }
 
   public get activeFocus(): ActiveFocus | null {

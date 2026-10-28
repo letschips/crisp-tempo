@@ -1582,6 +1582,48 @@ await scenario('r10_start_date_is_separate_from_due_date', async () => {
   return { inspectorStart: tomorrow, upcoming: true, clearedByWhen: true, createWithStart: true };
 });
 
+/* Round 11 — the moment a focus session ends is when the next step is fresh. Failure modes:
+   - nothing asks, so the next step stays empty unless the inspector happens to be open;
+   - asking blocks: a dialog that must be answered before anything else;
+   - the prompt lingers for finished, deleted or long-past work, or writes something on dismiss. */
+await scenario('r11_focus_wrap_up_card', async () => {
+  const p = await boot();
+  const offer = (taskId, fields = {}) => p.evaluate(({ taskId, fields }) => tempoAudit.store.TempoStore.get(plugin).offerFocusWrapUp(taskId,
+    { id: 's-' + Math.random(), startedAt: Date.now() - 25 * 60000, endedAt: Date.now(), minutes: 25, completed: true, pomodoro: true, ...fields }), { taskId, fields });
+  const card = p.locator('.tempo-wrapup-card');
+  assert.equal(await card.count(), 0);
+
+  await addTasks(p, [{ id: 'task-1', title: 'Primary Task', nextStep: 'Old step' }]);
+  await offer('task-1');
+  assert.ok((await card.innerText()).includes('Primary Task') && (await card.innerText()).includes('25 分钟'));
+  const input = card.locator('.tempo-wrapup-input');
+  assert.equal(await input.inputValue(), 'Old step', 'starts from the current next step');
+  await input.fill('Check the cost table');
+  await input.press('Enter');
+  await p.waitForFunction(() => fixture.disk.database.tasks['task-1'].nextStep === 'Check the cost table');
+  assert.equal(await card.count(), 0, 'saving closes it');
+
+  // Dismissing writes nothing.
+  await offer('task-1', { minutes: 12, completed: false });
+  assert.ok((await card.innerText()).includes('12 分钟'));
+  await card.locator('.tempo-wrapup-input').fill('Not this');
+  await card.getByRole('button', { name: '关闭' }).click();
+  assert.equal(await card.count(), 0);
+  await p.waitForTimeout(400);
+  assert.equal((await disk(p)).database.tasks['task-1'].nextStep, 'Check the cost table');
+
+  // Finished, deleted or long-past work is not asked about.
+  await offer('task-1');
+  await addTasks(p, [{ id: 'task-1', title: 'Primary Task', status: 'done', completedAt: Date.now() }]);
+  assert.equal(await card.count(), 0, 'gone once the task is done');
+  await offer('gone-task');
+  assert.equal(await card.count(), 0, 'no card for a task that does not exist');
+  await offer('task-3', { endedAt: Date.now() - 4 * 3600e3 });
+  assert.equal(await card.count(), 0, 'no card hours later');
+  await close(p);
+  return { saved: true, dismissedWithoutWrite: true, staleHidden: true };
+});
+
 await scenario('no_uncaught_page_errors', async () => {
   assert.deepEqual(pageErrors, [], 'the UI must not throw during any scenario');
   return { pageErrors: pageErrors.length };

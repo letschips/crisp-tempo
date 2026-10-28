@@ -18,7 +18,7 @@ import {
   getWaitingTasks,
   sortByStatus,
 } from "../core/selectors";
-import { TempoStore } from "../core/store";
+import { FOCUS_WRAP_UP_HOURS, TempoStore } from "../core/store";
 import type { Cycle, Project, Task, TaskPriority, TaskStatus, TodoDatabase } from "../core/types";
 import { getTodayString } from "../services/date-service";
 import { t, tf, type LanguageSetting, type Locale } from "../services/i18n";
@@ -33,6 +33,7 @@ import { GenericListView } from "./tasks/GenericListView";
 import { Header } from "./layout/Header";
 import { Inspector } from "./layout/Inspector";
 import { KpiRow } from "./layout/KpiRow";
+import { FocusWrapUpCard } from "./layout/FocusWrapUpCard";
 import { Sidebar } from "./layout/Sidebar";
 import { TodayView } from "./today/TodayView";
 
@@ -60,6 +61,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
     saveError: store.saveError,
     data: store.data,
     activeFocus: store.activeFocus,
+    focusWrapUp: store.focusWrapUp,
   });
 
   const [storeState, setStoreState] = useState(snapshot);
@@ -875,6 +877,27 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
           activeNav={activeNav}
           onSelectNav={(nav) => setActiveNav(nav)}
         />
+
+        {/* Just after a focus session on a task: note the next step, or close it */}
+        {(() => {
+          const wrapUp = storeState.focusWrapUp;
+          const wrapTask = wrapUp ? db.tasks[wrapUp.taskId] : undefined;
+          if (!wrapUp || !wrapTask || wrapTask.status === "done" || wrapTask.status === "canceled") return null;
+          if (Date.now() - wrapUp.endedAt > FOCUS_WRAP_UP_HOURS * 3600000) return null;
+          return (
+            <FocusWrapUpCard
+              key={`${wrapUp.taskId}-${wrapUp.endedAt}`}
+              task={wrapTask}
+              wrapUp={wrapUp}
+              locale={locale}
+              onSave={(nextStep) => {
+                if (nextStep !== wrapTask.nextStep) handleUpdateTaskById(wrapTask.id, { nextStep });
+                store.dismissFocusWrapUp();
+              }}
+              onDismiss={() => store.dismissFocusWrapUp()}
+            />
+          );
+        })()}
 
         {/* 3. Workbench (Cards Layout) */}
         <div className="tempo-workbench">

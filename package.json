@@ -1,6 +1,6 @@
 {
   "name": "crisp-tempo",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Things 3 × Linear independent personal task manager for Obsidian.",
   "main": "main.js",
   "type": "module",

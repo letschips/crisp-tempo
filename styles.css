@@ -1072,6 +1072,40 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   border-radius: 8px;
 }
 
+/* After a focus session: one line to note the next step; closing it changes nothing. */
+.tempo-wrapup-card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px 8px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--tempo-ui-accent) 35%, var(--tempo-ui-border));
+  background: color-mix(in srgb, var(--tempo-ui-accent) 7%, var(--background-primary));
+  font-size: 12.5px;
+}
+
+.tempo-wrapup-text {
+  color: var(--text-normal);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.tempo-wrapup-card .tempo-wrapup-input {
+  flex: 1 1 200px;
+  width: auto;
+}
+
+.tempo-wrapup-card .tempo-action-btn {
+  min-height: 0;
+  padding: 5px 10px;
+  border-radius: 8px;
+}
+
 /* Today: planned minutes against the daily capacity. */
 .tempo-capacity-line {
   padding: 8px 18px 0;

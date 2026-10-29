@@ -2,6 +2,12 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.12.2] - 2026-10-29
+
+### Changed
+- 提醒事项和日历的改动约 1 秒内出现在 Tempo，包括从 iPhone 同步过来的，不用切回 Obsidian 或等 5 分钟。
+- Tempo 里的改动和新建任务约 1 秒内写进提醒事项（原来约 3 秒）。
+
 ## [0.12.1] - 2026-10-29
 
 ### Fixed

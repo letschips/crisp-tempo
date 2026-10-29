@@ -25,6 +25,7 @@ writeFileSync(path.join(outDir, "helper.mjs"), [
   "export class AppleHelperError extends Error { constructor(code, message) { super(message); this.code = code; } }",
   "export const appleHelperSupported = () => true;",
   "export const runAppleHelper = (plugin, command, request) => globalThis.helper(command, request);",
+  "export const startAppleWatch = (plugin, onChange) => { globalThis.appleWatch = { onChange, running: true }; return () => { globalThis.appleWatch.running = false; }; };",
 ].join("\n"));
 await esbuild.build({
   stdin: {
@@ -269,4 +270,31 @@ test("F2: two tasks on one reminder are announced once and the newer one points 
   assert.equal(store.data.apple.links.b.duplicateOf, "a");
   assert.deepEqual(Object.keys(store.data.database.tasks).sort(), ["a", "b"], "no task is deleted");
   assert.equal(globalThis.notices.filter((n) => n.includes("同一条提醒")).length, 1);
+});
+
+test("a change reported by Reminders syncs at once; one burst makes one sync; the watch runs only while something is on", async () => {
+  const fake = fakeReminders([{ id: "R1", title: "写周报", listId: "L1" }]);
+  globalThis.appleWatch = null;
+  const { store, controller } = setup({ apple: { links: { t1: linkOf("R1") } } });
+  await controller.syncNow();
+  assert.equal(globalThis.appleWatch?.running, true);
+  const lists = () => fake.calls.filter((c) => c === "reminder-lists").length;
+  const syncs = () => fake.calls.filter((c) => c === "reminders").length;
+  const [listsBefore, syncsBefore] = [lists(), syncs()];
+  await controller.syncNow();
+  assert.equal(lists(), listsBefore, "names are not read again without a change");
+
+  fake.reminders.get("R1").title = "手机上改了";
+  fake.reminders.get("R1").modifiedAt = Date.now();
+  globalThis.appleWatch.onChange();
+  globalThis.appleWatch.onChange();
+  globalThis.appleWatch.onChange();
+  await new Promise((r) => setTimeout(r, 300));
+  await controller.syncNow();
+  assert.equal(store.data.database.tasks.t1.title, "手机上改了");
+  assert.equal(syncs() - syncsBefore, 3, "the three notifications made one sync (plus the two asked for)");
+  assert.equal(lists(), listsBefore + 1, "names are read again after a change");
+
+  await controller.setEnabled("reminders", false);
+  assert.equal(globalThis.appleWatch.running, false);
 });

@@ -14,15 +14,21 @@ import {
   type ReminderFetch,
   type ReminderUpdate,
 } from "../core/apple-sync";
-import { AppleHelperError, appleHelperSupported, runAppleHelper } from "./apple-helper";
+import { AppleHelperError, appleHelperSupported, runAppleHelper, startAppleWatch } from "./apple-helper";
 import { getTodayString } from "./date-service";
 import { lt } from "./i18n";
 
-/** Reminders changes are picked up this often, and when Obsidian comes back to the front. */
+/**
+ * Changes in Reminders and Calendar arrive from the running helper as they happen. As a fallback
+ * (helper restarting, a missed notification) Tempo also syncs this often and when Obsidian comes
+ * back to the front.
+ */
 const SYNC_INTERVAL_MS = 5 * 60_000;
 const FOCUS_MIN_GAP_MS = 10_000;
-/** A Tempo edit to a linked task is written to Reminders this long after the last keystroke. */
-const CHANGE_DELAY_MS = 2_000;
+/** A Tempo edit to a linked task is written to Reminders this long after the last change. */
+const CHANGE_DELAY_MS = 700;
+/** Change notifications from Reminders and Calendar within this window make one sync. */
+const OUTSIDE_CHANGE_DELAY_MS = 200;
 
 type Kind = "reminders" | "calendar";
 
@@ -48,6 +54,11 @@ export class AppleSyncController {
   private lastRunAt = 0;
   private changeTimer: number | null = null;
   private linkedSeen = new Map<string, Task | undefined>();
+  /** Stops the running helper that reports changes; set while Reminders or Calendar is on. */
+  private stopWatch: (() => void) | null = null;
+  private outsideTimer: number | null = null;
+  /** List and calendar names are read again only after a change was reported (or on request). */
+  private namesStale = true;
   /** True while this controller writes to the store, so its own changes are not synced back. */
   private applying = false;
   /** The tasks waiting to be added to Reminders by themselves, as last seen; a sync is scheduled when they change. */
@@ -74,6 +85,9 @@ export class AppleSyncController {
     };
     this.plugin.register(() => {
       if (this.changeTimer !== null) window.clearTimeout(this.changeTimer);
+      if (this.outsideTimer !== null) window.clearTimeout(this.outsideTimer);
+      this.stopWatch?.();
+      this.stopWatch = null;
       store.appleActions = null;
     });
     this.plugin.registerInterval(window.setInterval(() => void this.syncNow(), SYNC_INTERVAL_MS));
@@ -116,10 +130,12 @@ export class AppleSyncController {
     }
     store.setAppleRuntime({ reminders: status.reminders, calendar: status.calendar, error: undefined });
 
-    if (status.reminders === "fullAccess" && (settings.remindersEnabled || manual || !store.appleRuntime.reminderLists)) {
+    const names = manual || this.namesStale;
+    this.namesStale = false;
+    if (status.reminders === "fullAccess" && (names || !store.appleRuntime.reminderLists)) {
       await this.loadReminderLists();
     }
-    if (status.calendar === "fullAccess" && (settings.calendarEnabled || manual || !store.appleRuntime.calendars)) {
+    if (status.calendar === "fullAccess" && (names || !store.appleRuntime.calendars)) {
       await this.loadCalendars();
     }
     if (settings.remindersEnabled && status.reminders === "fullAccess") {
@@ -128,6 +144,30 @@ export class AppleSyncController {
     }
     if (settings.calendarEnabled && status.calendar === "fullAccess") await this.loadTodayEvents();
     else if (store.appleRuntime.events) store.setAppleRuntime({ events: undefined, eventsDate: undefined });
+    this.updateWatch(
+      (!!store.data?.apple?.remindersEnabled && status.reminders === "fullAccess") ||
+      (!!store.data?.apple?.calendarEnabled && status.calendar === "fullAccess"),
+    );
+  }
+
+  /** Runs the change-reporting helper while something is synced, and stops it otherwise. */
+  private updateWatch(wanted: boolean): void {
+    if (wanted && !this.stopWatch) {
+      this.stopWatch = startAppleWatch(this.plugin, () => this.onOutsideChange());
+    } else if (!wanted && this.stopWatch) {
+      this.stopWatch();
+      this.stopWatch = null;
+    }
+  }
+
+  /** Something changed in Reminders or Calendar (also Tempo's own writes, which sync to nothing). */
+  private onOutsideChange(): void {
+    this.namesStale = true;
+    if (this.outsideTimer !== null) window.clearTimeout(this.outsideTimer);
+    this.outsideTimer = window.setTimeout(() => {
+      this.outsideTimer = null;
+      void this.syncNow();
+    }, OUTSIDE_CHANGE_DELAY_MS);
   }
 
   private async loadReminderLists(): Promise<void> {
@@ -311,6 +351,7 @@ export class AppleSyncController {
     if (!enabled) {
       store.updateAppleSettings((prev) => ({ ...prev, [field]: false }));
       if (kind === "calendar") store.setAppleRuntime({ events: undefined, eventsDate: undefined });
+      if (!store.data?.apple?.remindersEnabled && !store.data?.apple?.calendarEnabled) this.updateWatch(false);
       return;
     }
     await this.exclusive(async () => {

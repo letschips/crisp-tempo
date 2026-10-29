@@ -4,6 +4,11 @@
 // Every run prints one JSON object on stdout: {"ok":true,...} or {"ok":false,"code":"…","message":"…"}.
 // Obsidian starts this program, so macOS asks for (and remembers) the permission as Obsidian.
 //
+// tempo-apple-helper serve: stays running with EventKit open. Each stdin line is
+// {"id":n,"command":"…","request":{…}} and is answered by one stdout line with the same "id".
+// When Reminders or Calendar change (here, in another app, or synced from another device) it
+// writes {"event":"changed"}. It exits when stdin closes.
+//
 // Commands:
 //   status                      authorization of Reminders and Calendar
 //   request-access              {"reminders":bool,"calendar":bool}; asks for full access where undetermined
@@ -35,16 +40,16 @@ func emit(_ object: [String: Any]) {
   FileHandle.standardOutput.write(Data("\n".utf8))
 }
 
-func fail(_ error: HelperError) -> Never {
-  emit(["ok": false, "code": error.code, "message": error.message])
-  exit(1)
+func errorObject(_ error: Error) -> [String: Any] {
+  if let error = error as? HelperError { return ["ok": false, "code": error.code, "message": error.message] }
+  return ["ok": false, "code": "eventkit_error", "message": error.localizedDescription]
 }
 
-func readRequest() -> [String: Any] {
+func readRequest() throws -> [String: Any] {
   let data = FileHandle.standardInput.readDataToEndOfFile()
   if data.isEmpty { return [:] }
   guard let object = try? JSONSerialization.jsonObject(with: data), let dict = object as? [String: Any] else {
-    fail(HelperError(code: "bad_request", message: "The request on stdin is not a JSON object."))
+    throw HelperError(code: "bad_request", message: "The request on stdin is not a JSON object.")
   }
   return dict
 }
@@ -64,12 +69,12 @@ func statusObject() -> [String: Any] {
   ["reminders": authorization(.reminder), "calendar": authorization(.event)]
 }
 
-func requireAccess(_ type: EKEntityType) {
+func requireAccess(_ type: EKEntityType) throws {
   let state = authorization(type)
   if state == "fullAccess" { return }
   let what = type == .reminder ? "Reminders" : "Calendar"
-  fail(HelperError(code: state == "notDetermined" ? "not_determined" : "permission_denied",
-                   message: "\(what) access is \(state)."))
+  throw HelperError(code: state == "notDetermined" ? "not_determined" : "permission_denied",
+                    message: "\(what) access is \(state).")
 }
 
 func requestAccess(_ type: EKEntityType) {
@@ -195,8 +200,8 @@ func setDue(_ reminder: EKReminder, _ value: Any?) throws {
   reminder.dueDateComponents = comps
 }
 
-func runReminders(_ request: [String: Any]) {
-  requireAccess(.reminder)
+func runReminders(_ request: [String: Any]) throws -> [String: Any] {
+  try requireAccess(.reminder)
   let listIds = Set(strings(request["lists"]))
   let lists = store.calendars(for: .reminder).filter { listIds.contains($0.calendarIdentifier) }
   var byId: [String: [String: Any]] = [:]
@@ -221,16 +226,16 @@ func runReminders(_ request: [String: Any]) {
       missing.append(id)
     }
   }
-  emit([
+  return [
     "reminders": order.compactMap { byId[$0] },
     "items": found,
     "missing": missing,
     "lists": lists.map(calendarObject),
-  ])
+  ]
 }
 
-func runApplyReminders(_ request: [String: Any]) {
-  requireAccess(.reminder)
+func runApplyReminders(_ request: [String: Any]) throws -> [String: Any] {
+  try requireAccess(.reminder)
   var results: [[String: Any]] = []
   for update in (request["updates"] as? [[String: Any]]) ?? [] {
     let id = update["id"] as? String
@@ -302,13 +307,14 @@ func runApplyReminders(_ request: [String: Any]) {
   do {
     try store.commit()
   } catch {
-    fail(HelperError(code: "eventkit_error", message: error.localizedDescription))
+    store.reset()
+    throw HelperError(code: "eventkit_error", message: error.localizedDescription)
   }
   // Identifiers are final only after the commit.
   for (key, reminder) in created {
     createResults.append(["key": key, "ok": true, "reminder": reminderObject(reminder)])
   }
-  emit(["updates": results, "creates": createResults])
+  return ["updates": results, "creates": createResults]
 }
 
 func availabilityName(_ value: EKEventAvailability) -> String {
@@ -332,19 +338,16 @@ func statusName(_ value: EKEventStatus) -> String {
   }
 }
 
-func runEvents(_ request: [String: Any]) {
-  requireAccess(.event)
+func runEvents(_ request: [String: Any]) throws -> [String: Any] {
+  try requireAccess(.event)
   guard let from = request["from"] as? Double, let to = request["to"] as? Double, to > from else {
-    fail(HelperError(code: "bad_request", message: "events needs numeric from < to (ms)."))
+    throw HelperError(code: "bad_request", message: "events needs numeric from < to (ms).")
   }
   var calendars: [EKCalendar]? = nil
   if let ids = request["calendars"] as? [Any] {
     let wanted = Set(ids.compactMap { $0 as? String })
     calendars = store.calendars(for: .event).filter { wanted.contains($0.calendarIdentifier) }
-    if calendars!.isEmpty {
-      emit(["events": []])
-      return
-    }
+    if calendars!.isEmpty { return ["events": []] }
   }
   let predicate = store.predicateForEvents(
     withStart: Date(timeIntervalSince1970: from / 1000),
@@ -365,40 +368,94 @@ func runEvents(_ request: [String: Any]) {
       "status": statusName(e.status),
     ]
   }
-  emit(["events": events])
+  return ["events": events]
+}
+
+func handle(_ command: String, _ request: [String: Any]) throws -> [String: Any] {
+  switch command {
+  case "status":
+    return statusObject()
+  case "request-access":
+    if request["reminders"] as? Bool == true { requestAccess(.reminder) }
+    if request["calendar"] as? Bool == true { requestAccess(.event) }
+    return statusObject()
+  case "reminder-lists":
+    try requireAccess(.reminder)
+    return [
+      "lists": store.calendars(for: .reminder).map(calendarObject),
+      "defaultId": store.defaultCalendarForNewReminders()?.calendarIdentifier ?? NSNull(),
+    ]
+  case "calendars":
+    try requireAccess(.event)
+    return ["calendars": store.calendars(for: .event).map(calendarObject)]
+  case "reminders":
+    return try runReminders(request)
+  case "apply-reminders":
+    return try runApplyReminders(request)
+  case "events":
+    return try runEvents(request)
+  case "version":
+    return ["version": 2]
+  default:
+    throw HelperError(code: "bad_request", message: "Unknown command: \(command)")
+  }
+}
+
+/// Long-running mode: requests run one at a time on the main queue, which also receives the
+/// store-changed notifications; stdout lines are written from one serial queue.
+func serve() -> Never {
+  let output = DispatchQueue(label: "tempo.helper.output")
+  let write: ([String: Any]) -> Void = { object in output.sync { emit(object) } }
+  var pendingChange: DispatchWorkItem?
+  NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: store, queue: .main) { _ in
+    // Several notifications arrive for one edit; one event is enough, after the cached objects are dropped.
+    pendingChange?.cancel()
+    let item = DispatchWorkItem {
+      store.reset()
+      write(["event": "changed"])
+    }
+    pendingChange = item
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
+  }
+  Thread {
+    while let line = readLine(strippingNewline: true) {
+      guard !line.isEmpty else { continue }
+      guard let data = line.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let command = object["command"] as? String else {
+        write(["ok": false, "code": "bad_request", "message": "Each line must be a JSON object with a command."])
+        continue
+      }
+      let id = object["id"] ?? NSNull()
+      let request = object["request"] as? [String: Any] ?? [:]
+      DispatchQueue.main.async {
+        var answer: [String: Any]
+        do {
+          answer = try handle(command, request)
+        } catch {
+          answer = errorObject(error)
+        }
+        answer["id"] = id
+        write(answer)
+      }
+    }
+    // Obsidian closed the pipe (quit, reload or crash): answer what was asked, then stop.
+    DispatchQueue.main.async { exit(0) }
+  }.start()
+  RunLoop.main.run()
+  exit(0)
 }
 
 let args = CommandLine.arguments.dropFirst()
 guard let command = args.first else {
-  fail(HelperError(code: "bad_request", message: "Missing command."))
+  emit(errorObject(HelperError(code: "bad_request", message: "Missing command.")))
+  exit(1)
 }
-
-switch command {
-case "status":
-  emit(statusObject())
-case "request-access":
-  let request = readRequest()
-  if request["reminders"] as? Bool == true { requestAccess(.reminder) }
-  if request["calendar"] as? Bool == true { requestAccess(.event) }
-  emit(statusObject())
-case "reminder-lists":
-  requireAccess(.reminder)
-  let lists = store.calendars(for: .reminder)
-  emit([
-    "lists": lists.map(calendarObject),
-    "defaultId": store.defaultCalendarForNewReminders()?.calendarIdentifier ?? NSNull(),
-  ])
-case "calendars":
-  requireAccess(.event)
-  emit(["calendars": store.calendars(for: .event).map(calendarObject)])
-case "reminders":
-  runReminders(readRequest())
-case "apply-reminders":
-  runApplyReminders(readRequest())
-case "events":
-  runEvents(readRequest())
-case "version":
-  emit(["version": 1])
-default:
-  fail(HelperError(code: "bad_request", message: "Unknown command: \(command)"))
+if command == "serve" { serve() }
+do {
+  let needsRequest = ["request-access", "reminders", "apply-reminders", "events"].contains(command)
+  emit(try handle(command, needsRequest ? try readRequest() : [:]))
+} catch {
+  emit(errorObject(error))
+  exit(1)
 }

@@ -4,6 +4,8 @@ import type { Task } from "../core/types";
 import {
   autoSendCandidates,
   confirmUpdate,
+  reminderKey,
+  withIgnored,
   linkValuesOf,
   newLink,
   planReminderSync,
@@ -185,6 +187,7 @@ export class AppleSyncController {
       // Turned off while reading: nothing more is read into Tempo or written to Reminders.
       if (!store.data?.apple?.remindersEnabled) return;
       let updates: ReminderUpdate[] = [];
+      let duplicates = 0;
       let imported = 0;
       let pulled = 0;
       this.apply((db, apple) => {
@@ -195,6 +198,7 @@ export class AppleSyncController {
           fetched,
           now,
           canImport: !!apple.remindersEnabled && store.data?.licenseStatus === "valid",
+          ignored: apple.ignored,
           dest: store.data?.defaultDest === "today" ? "today" : "inbox",
           today: getTodayString(),
           newTaskId: () => `task-${now}-${Math.random().toString(36).substring(2, 6)}`,
@@ -202,7 +206,7 @@ export class AppleSyncController {
         updates = plan.updates;
         imported = plan.imported;
         pulled = plan.pulled;
-        if (plan.duplicates) console.warn(`Crisp Tempo: ${plan.duplicates} task(s) were linked to a reminder another task holds; their links were switched off`);
+        duplicates = plan.duplicates;
         if (plan.db === db && JSON.stringify(plan.links) === JSON.stringify(apple.links ?? {})) return null;
         return { db: plan.db, apple: { ...apple, links: plan.links } };
       });
@@ -233,6 +237,12 @@ export class AppleSyncController {
           });
           return { db, apple: { ...apple, links: next } };
         });
+      }
+      if (duplicates) {
+        new Notice(lt(
+          `有 ${duplicates} 个任务和另一个任务对应同一条提醒（可能是两台设备同时导入），已停止同步。打开任务详情可以跳到另一个，再删掉不要的那个。`,
+          `${duplicates} task(s) share a reminder with another task (perhaps imported on two devices at once) and stopped syncing. Their details link to the other task, so you can delete the one you don't need.`,
+        ), 10_000);
       }
       const ok = failures.length === 0;
       store.setAppleRuntime({ lastSync: { at: Date.now(), ok, message: failures[0], imported, pulled, pushed } });
@@ -344,18 +354,40 @@ export class AppleSyncController {
       const task = store.data?.database.tasks[taskId];
       const settings = store.data?.apple ?? {};
       const existing = settings.links?.[taskId];
-      if (!task || (existing && !existing.off)) return;
+      if (!task || (existing && !existing.off) || existing?.duplicateOf) return;
       const values = linkValuesOf(task);
+      // Added again after unlinking: the old reminder, while still open, is linked again instead of
+      // making a second one (the next sync merges what changed on either side meanwhile).
+      if (existing) {
+        const found = await runAppleHelper<ReminderFetch>(this.plugin, "reminders", {
+          lists: [],
+          items: [{ id: existing.id, externalId: existing.externalId ?? null, listId: existing.listId ?? null }],
+        });
+        const old = found.items[0];
+        if (old && !old.completed) {
+          this.apply((db, apple) => {
+            const link = apple.links?.[taskId];
+            if (!link?.off) return null;
+            const { off: _off, duplicateOf: _dup, ...relinked } = link;
+            return { db, apple: { ...apple, links: { ...apple.links, [taskId]: relinked } } };
+          });
+          new Notice(lt(`已重新关联提醒事项「${old.listTitle ?? ""}」里原来那条`, `Linked again to the original reminder (${old.listTitle ?? ""})`));
+          void this.syncNow();
+          return;
+        }
+      }
       const answer = await runAppleHelper<ApplyAnswer>(this.plugin, "apply-reminders", {
         creates: [{ key: taskId, listId: settings.sendListId ?? null, title: values.title, notes: values.notes, due: values.due }],
       });
       const created = answer.creates[0];
       if (!created?.ok || !created.reminder) throw new AppleHelperError(created?.code ?? "helper_error", created?.message ?? "?");
       const reminder = created.reminder;
-      this.apply((db, apple) => ({
-        db,
-        apple: { ...apple, links: { ...(apple.links ?? {}), [taskId]: newLink(reminder, values) } },
-      }));
+      this.apply((db, apple) => {
+        // The replaced link's reminder (done or gone, or it would have been linked again) is never imported.
+        const old = apple.links?.[taskId];
+        const ignored = old ? withIgnored(apple.ignored, reminderKey(old)) : apple.ignored;
+        return { db, apple: { ...apple, ignored, links: { ...(apple.links ?? {}), [taskId]: newLink(reminder, values) } } };
+      });
       new Notice(lt(`已添加到提醒事项「${reminder.listTitle ?? ""}」`, `Added to Reminders (${reminder.listTitle ?? ""})`));
     }).catch((err) => {
       new Notice(lt(`没能添加到提醒事项：${describe(err)}`, `Could not add to Reminders: ${describe(err)}`));

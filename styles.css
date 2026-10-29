@@ -2778,3 +2778,8 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
 .tempo-event-row.is-canceled .tempo-event-title {
   text-decoration: line-through;
 }
+
+.tempo-reminder-duplicate .tempo-reminder-list {
+  white-space: normal;
+  color: var(--text-muted);
+}

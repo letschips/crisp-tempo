@@ -28,6 +28,8 @@ export interface ReminderLink {
   completed: boolean;
   /** No longer synced; kept so the reminder is not imported again. */
   off?: true;
+  /** Switched off because this task id holds the same reminder (two Macs imported it at once). */
+  duplicateOf?: string;
 }
 
 export interface AppleSettings {
@@ -44,6 +46,11 @@ export interface AppleSettings {
   hiddenCalendars?: string[];
   /** Linked reminders by Tempo task id. A link outlives its task so the reminder is not imported again. */
   links?: Record<string, ReminderLink>;
+  /**
+   * Reminders never to import (see reminderKey), kept apart from the links: a task's link can be
+   * replaced (added to Reminders again after unlinking) while its old reminder is still open.
+   */
+  ignored?: string[];
 }
 
 /** A reminder as the helper reports it. */
@@ -158,7 +165,15 @@ function withValues(task: Task, values: Partial<Shared>, reminder: AppleReminder
 }
 
 /** One reminder's identity across Macs: its external id where it has one. */
-const linkKey = (link: Pick<ReminderLink, "id" | "externalId">) => link.externalId || `local:${link.id}`;
+export const reminderKey = (item: { id: string; externalId?: string | null }) => item.externalId || `local:${item.id}`;
+const linkKey = reminderKey;
+const MAX_IGNORED = 500;
+
+/** Adds a reminder to the never-import set, newest last, bounded. */
+export function withIgnored(ignored: readonly string[] | undefined, key: string): string[] {
+  const rest = (ignored ?? []).filter((item) => item !== key);
+  return [...rest, key].slice(-MAX_IGNORED);
+}
 
 /**
  * When several active links point at the same reminder, the oldest task keeps it and the others are
@@ -176,7 +191,7 @@ function dropDuplicateLinks(links: Record<string, ReminderLink>, tasks: Record<s
     if (ids.length < 2) continue;
     ids.sort((a, b) => tasks[a].createdAt - tasks[b].createdAt || (a < b ? -1 : 1));
     for (const taskId of ids.slice(1)) {
-      links[taskId] = { ...links[taskId], off: true };
+      links[taskId] = { ...links[taskId], off: true, duplicateOf: ids[0] };
       dropped++;
     }
   }
@@ -211,6 +226,8 @@ export function planReminderSync(input: {
   now: number;
   canImport: boolean;
   newTaskId: () => string;
+  /** Reminders never to import (AppleSettings.ignored). */
+  ignored?: readonly string[];
   /** Tempo's default destination for new tasks; defaults to the inbox. */
   dest?: "inbox" | "today";
   /** YYYY-MM-DD, for `dest` "today". */
@@ -304,8 +321,9 @@ export function planReminderSync(input: {
   if (input.canImport) {
     const known = Object.values(links);
     const sourced = new Set(Object.values(tasks).map((task) => task.sourceId).filter(Boolean));
+    const ignored = new Set(input.ignored ?? []);
     for (const reminder of input.fetched.reminders) {
-      if (reminder.completed) continue;
+      if (reminder.completed || ignored.has(reminderKey(reminder))) continue;
       if (known.some((link) => linkMatches(link, reminder))) continue;
       const sourceId = reminderSourceId(reminder);
       if (sourced.has(sourceId)) continue;
@@ -392,8 +410,10 @@ function cleanLink(raw: unknown): ReminderLink | null {
   const externalId = optional(raw.externalId);
   const listId = optional(raw.listId);
   const listTitle = optional(raw.listTitle);
+  const duplicateOf = raw.off === true ? optional(raw.duplicateOf) : undefined;
   return {
     ...(raw.off === true ? { off: true as const } : {}),
+    ...(duplicateOf ? { duplicateOf } : {}),
     id: raw.id,
     ...(externalId ? { externalId } : {}),
     ...(listId ? { listId } : {}),
@@ -427,6 +447,7 @@ export function cleanAppleSettings(raw: unknown): AppleSettings | undefined {
     ...(raw.calendarEnabled === true ? { calendarEnabled: true } : {}),
     ...(ids(raw.hiddenCalendars)?.length ? { hiddenCalendars: ids(raw.hiddenCalendars) } : {}),
     ...(Object.keys(links).length ? { links } : {}),
+    ...(ids(raw.ignored)?.length ? { ignored: ids(raw.ignored)!.slice(-MAX_IGNORED) } : {}),
   };
   return Object.keys(out).length ? out : undefined;
 }

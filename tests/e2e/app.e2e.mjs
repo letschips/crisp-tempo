@@ -1714,6 +1714,16 @@ await scenario('r12_apple_reminders_calendar', async () => {
   await p.waitForFunction(() => !fixture.disk.apple?.links?.['ap-1']);
   await p.locator('.tempo-task-row', { hasText: 'Finished thing' }).click();
   assert.equal(await p.locator('.tempo-inspector-card .tempo-reminder-row').count(), 0, 'nothing to add for a finished task');
+  // A duplicate (same reminder as another task) says so and opens the other task.
+  await addTasks(p, [{ id: 'ap-dup', title: 'Write report copy' }]);
+  await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).updateAppleSettings((prev) => ({ ...prev, links: { ...prev.links,
+    'ap-dup': { id: 'R-x', title: 'Write report copy', notes: '', due: null, completed: false, off: true, duplicateOf: 'ap-1' } } })));
+  await p.locator('.tempo-task-row', { hasText: 'Write report copy' }).click();
+  const dupRow = p.locator('.tempo-inspector-card .tempo-reminder-duplicate');
+  assert.ok((await dupRow.innerText()).includes('和「Write report」是同一条提醒'));
+  assert.equal(await p.locator('.tempo-inspector-card .tempo-reminder-add').count(), 0, 'no add button on a duplicate');
+  await dupRow.getByRole('button', { name: '打开那条' }).click();
+  await p.waitForFunction(() => document.querySelector('.tempo-inspector-card .tempo-inspector-title-input')?.value === 'Write report');
   const calls = await p.evaluate(() => __appleCalls.map((c) => c[0]));
   assert.ok(calls.includes('send') && calls.includes('unlink') && calls.includes('setEnabled') && calls.includes('sync'));
   await close(p);

@@ -1013,6 +1013,11 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
                 store.appleActions && storeState.data.apple?.remindersEnabled && storeState.apple.reminders === "fullAccess"
                   ? {
                       link: storeState.data.apple.links?.[selectedTask.id]?.off ? undefined : storeState.data.apple.links?.[selectedTask.id],
+                      duplicateOf: (() => {
+                        const otherId = storeState.data.apple.links?.[selectedTask.id]?.duplicateOf;
+                        const other = otherId ? allTasks[otherId] : undefined;
+                        return other ? { title: other.title, onOpen: () => store.revealTask(other.id) } : undefined;
+                      })(),
                       onAdd: () => void store.appleActions?.sendTask(selectedTask.id),
                       onUnlink: () => store.appleActions?.unlinkTask(selectedTask.id),
                     }

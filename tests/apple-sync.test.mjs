@@ -196,6 +196,15 @@ test("without a due day an import follows Tempo's default destination", () => {
   assert.equal(future.focusDate, undefined);
 });
 
+test("a reminder in the never-import set stays out, whatever its links say", () => {
+  const r = reminder({ id: "R8", externalId: "EXT-8" });
+  const result = planReminderSync({
+    db: db([]), links: {}, fetched: { reminders: [r, reminder({ id: "L9", externalId: null })], items: [], missing: [] },
+    now: T0, canImport: true, newTaskId: () => `n${++seq}`, ignored: ["EXT-8", "local:L9"],
+  });
+  assert.equal(result.imported, 0);
+});
+
 test("nothing is imported without a licence, but linked tasks still sync", () => {
   const result = plan({
     canImport: false,
@@ -219,6 +228,8 @@ test("stored settings keep what is readable and drop broken links", () => {
   assert.deepEqual(clean, { remindersEnabled: true, reminderLists: ["L1"], links: { t1: link() } });
   assert.deepEqual(cleanAppleSettings({ reminderLists: [], links: { t1: link({ off: true }) } }), { reminderLists: [], links: { t1: link({ off: true }) } },
     "an empty choice and a switched-off link survive saving");
+  assert.deepEqual(cleanAppleSettings({ ignored: ["EXT-1", 2], links: { t1: link({ off: true, duplicateOf: "t0" }), t2: link({ duplicateOf: "t0" }) } }),
+    { ignored: ["EXT-1"], links: { t1: link({ off: true, duplicateOf: "t0" }), t2: link() } }, "duplicateOf only on a switched-off link");
   assert.equal(cleanAppleSettings({}), undefined);
   assert.equal(cleanAppleSettings("x"), undefined);
 });
@@ -233,6 +244,7 @@ test("links from both devices survive a merge; a setting changed on one side is 
   assert.deepEqual(Object.keys(merged.links).sort(), ["t1", "t2", "t3"]);
   assert.equal(merged.links.t1.completed, true);
   assert.deepEqual(conflicts, []);
+  assert.deepEqual(mergeAppleSettings({}, { ignored: ["a"] }, { ignored: ["b", "a"] }, []).ignored, ["a", "b"], "never-import entries from both sides");
   const removed = mergeAppleSettings(base, { remindersEnabled: true }, base, []);
   assert.equal(removed.links, undefined, "a link removed on one side stays removed");
 });
@@ -259,6 +271,7 @@ test("two tasks linked to one reminder (two Macs imported it at once): the oldes
   const result = plan({ tasks: [a, b], links, items: [reminder({ id: "MAC-A", requestedId: "MAC-A" }), reminder({ id: "MAC-A", requestedId: "MAC-B" })] });
   assert.equal(result.duplicates, 1);
   assert.equal(result.links.a.off, true, "the newer task's link is switched off");
+  assert.equal(result.links.a.duplicateOf, "b", "and says which task holds the reminder");
   assert.equal(result.links.b.off, undefined);
   assert.deepEqual(Object.keys(result.db.tasks).sort(), ["a", "b"]);
   assert.deepEqual(result.updates.map((u) => u.taskId), ["b"], "only the kept task writes");

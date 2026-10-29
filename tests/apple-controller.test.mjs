@@ -124,10 +124,10 @@ test("F1: add to Reminders, unlink, sync again: still one task, and the reminder
   await controller.syncNow();
   assert.deepEqual(Object.keys(store.data.database.tasks), ["t1"]);
   assert.equal(store.data.apple.links.t1.off, true);
-  // Adding it again makes a fresh link (and a second reminder, as asked).
+  // Adding it again links the same reminder again (see "F1 again" below).
   await controller.sendTask("t1");
   assert.equal(store.data.apple.links.t1.off, undefined);
-  assert.equal(fake.reminders.size, 2);
+  assert.equal(fake.reminders.size, 1);
 });
 
 test("F3: turning Reminders off while a sync reads writes nothing to Reminders or Tempo", async () => {
@@ -229,4 +229,44 @@ test("auto-add: a new task is added once; older ones, a deleted reminder's task 
   await controller.syncNow();
   assert.ok(store.data.apple.links.n2 && !store.data.apple.links.n2.off);
   assert.equal(fake.reminders.size, 1);
+});
+
+test("F1 again: unlink then add again relinks the open original, and a finished one is never imported again", async () => {
+  const fake = fakeReminders();
+  const { store, controller } = setup();
+  await controller.sendTask("t1");
+  const first = store.data.apple.links.t1.id;
+  controller.unlinkTask("t1");
+  await controller.sendTask("t1");
+  assert.equal(fake.reminders.size, 1, "the original reminder is linked again, not duplicated");
+  assert.equal(store.data.apple.links.t1.id, first);
+  assert.equal(store.data.apple.links.t1.off, undefined);
+  await controller.syncNow();
+  assert.deepEqual(Object.keys(store.data.database.tasks), ["t1"]);
+
+  // The original was finished while unlinked: adding again makes a new reminder, and reopening the
+  // old one later does not import it as a second task.
+  controller.unlinkTask("t1");
+  fake.reminders.get(first).completed = true;
+  await controller.sendTask("t1");
+  assert.equal(fake.reminders.size, 2);
+  assert.notEqual(store.data.apple.links.t1.id, first);
+  assert.deepEqual(store.data.apple.ignored, [`EXT-${first}`]);
+  fake.reminders.get(first).completed = false;
+  await controller.syncNow();
+  assert.deepEqual(Object.keys(store.data.database.tasks), ["t1"]);
+});
+
+test("F2: two tasks on one reminder are announced once and the newer one points at the older", async () => {
+  fakeReminders([{ id: "R1", title: "写周报", listId: "L1" }]);
+  globalThis.notices = [];
+  const { store, controller } = setup({
+    tasks: [task({ id: "a", createdAt: T0 }), task({ id: "b", createdAt: T0 + 1 })],
+    apple: { links: { a: linkOf("R1"), b: { ...linkOf("R1-MAC2"), externalId: "EXT-R1" } } },
+  });
+  await controller.syncNow();
+  await controller.syncNow();
+  assert.equal(store.data.apple.links.b.duplicateOf, "a");
+  assert.deepEqual(Object.keys(store.data.database.tasks).sort(), ["a", "b"], "no task is deleted");
+  assert.equal(globalThis.notices.filter((n) => n.includes("同一条提醒")).length, 1);
 });

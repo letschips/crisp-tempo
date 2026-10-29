@@ -31,7 +31,13 @@ interface InspectorProps {
   /** Opens the note a task came from (set by tasks created from another plugin, e.g. Pulse memos). */
   onOpenSource?: (notePath: string) => void;
   /** The task's macOS reminder: shown while Reminders sync is on, on desktop macOS. */
-  reminder?: { link?: ReminderLink; onAdd: () => void; onUnlink: () => void };
+  reminder?: {
+    link?: ReminderLink;
+    /** Another task holds the same reminder; this one stopped syncing. */
+    duplicateOf?: { title: string; onOpen: () => void };
+    onAdd: () => void;
+    onUnlink: () => void;
+  };
   /** Opens the task's outcome note or URL. */
   onOpenOutcome?: (link: string) => void;
   /** Crisp Focus time on this task. Hidden when Focus is not installed and nothing was recorded. */
@@ -496,10 +502,17 @@ export function Inspector({
           )}
         </div>
 
-        {reminder && (reminder.link || (task.status !== "done" && task.status !== "canceled" && !task.parentTaskId)) && (
+        {reminder && (reminder.link || reminder.duplicateOf || (task.status !== "done" && task.status !== "canceled" && !task.parentTaskId)) && (
           <div className="tempo-property-grid tempo-reminder-row">
             <span className="tempo-property-label">{t("appleLinked", locale)}</span>
-            {reminder.link ? (
+            {reminder.duplicateOf ? (
+              <div className="tempo-reminder-linked tempo-reminder-duplicate">
+                <span className="tempo-reminder-list">{tf("appleDuplicateOf", locale, { title: reminder.duplicateOf.title })}</span>
+                <button type="button" className="tempo-action-btn" onClick={reminder.duplicateOf.onOpen}>
+                  {t("appleOpenOther", locale)}
+                </button>
+              </div>
+            ) : reminder.link ? (
               <div className="tempo-reminder-linked">
                 <span className="tempo-reminder-list">{reminder.link.listTitle ?? ""}</span>
                 <button type="button" className="tempo-action-btn" onClick={reminder.onUnlink}>

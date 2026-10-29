@@ -121,7 +121,10 @@ export function mergeAppleSettings(
     const { value } = pick(base?.links?.[id], localLinks[id], remoteLinks[id]);
     if (value !== undefined) links[id] = value;
   }
+  // Never-import entries are only ever added, so both sides' are kept.
+  const ignored = [...new Set([...(local?.ignored ?? []), ...(remote?.ignored ?? [])])];
   const out: AppleSettings = {
+    ignored: ignored.length ? ignored : undefined,
     remindersEnabled: field("remindersEnabled"),
     reminderLists: field("reminderLists"),
     sendListId: field("sendListId"),

@@ -11,6 +11,11 @@ import type { Task, TodoDatabase } from "./types";
  * carries the values it was planned against, and the helper refuses it when the reminder changed
  * since (an edit on the phone between reading and writing); the next sync merges again.
  *
+ * A repeating reminder is never done: finishing it (here or in Reminders) moves it to its next date
+ * and adds a finished copy with the old date. When the linked reminder's date moved on and such a
+ * copy holds the date the link knew, that occurrence was finished: the task is done and a new task
+ * takes over the link for the next date. A date moved without a finished copy is an ordinary edit.
+ *
  * A link switched `off` (unlinked by the user, its reminder deleted, or a duplicate) no longer syncs
  * but still holds the reminder back from being imported again, and the task from being added again.
  */
@@ -66,6 +71,10 @@ export interface AppleReminder {
   completed: boolean;
   completedAt: number | null;
   modifiedAt: number | null;
+  /** Has a repeat rule (finishing it moves it to the next date). */
+  recurring?: boolean;
+  /** For a repeating looked-up item: recent finished copies in its list with its title. */
+  doneOccurrences?: { due: string | null; completedAt: number | null }[];
   /** For looked-up items: the link id it was asked for. */
   requestedId?: string | null;
 }
@@ -101,6 +110,8 @@ export interface ReminderSyncPlan {
   /** Tasks changed from Reminders. */
   pulled: number;
   unlinked: number;
+  /** Occurrences of repeating reminders finished, each followed by a task for the next date. */
+  advanced: number;
   /** Tasks found linked to a reminder another task already holds (two Macs imported it at once); their links were switched off. */
   duplicates: number;
 }
@@ -202,6 +213,25 @@ function linkMatches(link: ReminderLink, reminder: AppleReminder): boolean {
   return link.id === reminder.id || (!!reminder.externalId && link.externalId === reminder.externalId);
 }
 
+/** The occurrence the link knew was finished and the reminder moved on to its next date. */
+function finishedOccurrence(link: ReminderLink, reminder: AppleReminder): { completedAt: number | null } | undefined {
+  if (!reminder.recurring || reminder.completed || !link.due) return undefined;
+  const due = reminderValues(reminder).due;
+  if (!due || due === link.due) return undefined;
+  return reminder.doneOccurrences?.find((item) => item.due === link.due);
+}
+
+/**
+ * The task for a repeating reminder's next date: the finished task's planning (project, labels,
+ * estimate, priority…) without what belonged to that occurrence (today's plan, start, outcome).
+ */
+function nextOccurrence(task: Task, id: string, due: string | null, now: number): Task {
+  const next: Task = { ...task, id, status: "todo", triage: "processed", createdAt: now };
+  for (const key of ["completedAt", "canceledAt", "focusDate", "startDate", "outcomeLink", "dueDate"] as const) delete next[key];
+  if (due) next.dueDate = due;
+  return next;
+}
+
 export function newLink(reminder: AppleReminder, values: Shared): ReminderLink {
   return {
     id: reminder.id,
@@ -243,9 +273,10 @@ export function planReminderSync(input: {
   let pulled = 0;
   let unlinked = 0;
   let imported = 0;
+  let advanced = 0;
   const duplicates = dropDuplicateLinks(links, tasks);
 
-  for (const [taskId, link] of Object.entries(links)) {
+  for (let [taskId, link] of Object.entries(links)) {
     const reminder = byRequested.get(link.id);
     if (!reminder) {
       // Deleted in Reminders: the task stays as it is and stops syncing. Its link stays switched
@@ -265,13 +296,36 @@ export function planReminderSync(input: {
       ...(reminder.listId ? { listId: reminder.listId } : {}),
       ...(reminder.listTitle ? { listTitle: reminder.listTitle } : {}),
     };
-    const task = tasks[taskId];
+    let task = tasks[taskId];
     if (!task || link.off) {
       // The task was deleted or unlinked in Tempo; the reminder is left alone. A deleted task's link
       // goes once the reminder is done; an unlinked task's stays, so the task is never added again.
       if (!task && reminder.completed) delete links[taskId];
       else links[taskId] = placed;
       continue;
+    }
+    const finished = finishedOccurrence(link, reminder);
+    if (finished) {
+      // The old task is done with that occurrence; a new task carries on with the link, starting
+      // from what the link knew so the title and notes still merge, at the reminder's new date.
+      const done: Task = { ...task };
+      if (task.status !== "done" && task.status !== "canceled") {
+        Object.assign(done, { status: "done", completedAt: finished.completedAt ?? now, updatedAt: now });
+        delete done.canceledAt;
+        pulled++;
+      }
+      const nextId = input.newTaskId();
+      const due = reminderValues(reminder).due;
+      const next = nextOccurrence(task, nextId, due, now);
+      delete done.sourceId;
+      tasks[taskId] = done;
+      tasks[nextId] = next;
+      delete links[taskId];
+      taskId = nextId;
+      task = next;
+      link = { ...link, due, completed: false };
+      Object.assign(placed, { due, completed: false });
+      advanced++;
     }
     const mine = taskValues(task);
     const theirs = reminderValues(reminder);
@@ -354,7 +408,7 @@ export function planReminderSync(input: {
     }
   }
 
-  const changed = pulled > 0 || imported > 0;
+  const changed = pulled > 0 || imported > 0 || advanced > 0;
   return {
     db: changed ? { ...input.db, tasks } : input.db,
     links,
@@ -362,6 +416,7 @@ export function planReminderSync(input: {
     imported,
     pulled,
     unlinked,
+    advanced,
     duplicates,
   };
 }

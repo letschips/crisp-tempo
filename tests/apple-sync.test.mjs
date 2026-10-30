@@ -11,6 +11,9 @@
 // - two Macs importing the same reminder at once both keep syncing it (audit F2);
 // - a write does not say what it was planned against, so a later phone edit is overwritten (audit F4);
 // - "no list" is lost and becomes the default list again (audit F6).
+// - a repeating reminder finished in Tempo comes back open with the next date and the completion is
+//   lost; finished in Reminders, the task only moves to the next date and is never done (0.12.3);
+// - a repeating reminder merely moved to a later day counts as finished.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -291,6 +294,75 @@ test("auto-add picks open top-level tasks created since it was turned on, never 
   const apple = { autoSend: true, autoSendSince: since, links: { unlinked: link({ off: true }) } };
   assert.deepEqual(autoSendCandidates(db(tasks), apple).map((t) => t.id), ["new", "pulse"]);
   assert.deepEqual(autoSendCandidates(db(tasks), { ...apple, autoSend: undefined }), []);
+});
+
+// A weekly reminder as Reminders leaves it after one occurrence is finished: the reminder itself moves
+// to the next date and stays open, and a finished copy with the old date is added (doneOccurrences).
+const weekly = (fields = {}) => reminder({
+  due: "2026-11-06", recurring: true, modifiedAt: T0 + 5000,
+  doneOccurrences: [{ due: "2026-10-30", completedAt: T0 + 5000 }], ...fields,
+});
+
+test("a repeating reminder finished in Reminders finishes the task and adds one for the next date", () => {
+  const current = task({ dueDate: "2026-10-30", projectId: "p1", labels: ["l1"], estimateMinutes: 15, focusDate: "2026-10-30", sourceId: "apple-reminders:EXT-1" });
+  const result = plan({ tasks: [current], links: { t1: link({ due: "2026-10-30" }) }, items: [weekly()] });
+  const done = result.db.tasks.t1;
+  assert.equal(done.status, "done");
+  assert.equal(done.completedAt, T0 + 5000);
+  assert.equal(done.dueDate, "2026-10-30", "the finished task keeps its own date");
+  assert.equal(result.links.t1, undefined, "the finished task no longer syncs");
+  const [nextId] = Object.keys(result.links);
+  const next = result.db.tasks[nextId];
+  assert.equal(next.status, "todo");
+  assert.equal(next.dueDate, "2026-11-06");
+  assert.equal(next.title, "写周报");
+  assert.equal(next.projectId, "p1");
+  assert.deepEqual(next.labels, ["l1"]);
+  assert.equal(next.estimateMinutes, 15);
+  assert.equal(next.focusDate, undefined, "planned for today was the finished occurrence");
+  assert.equal(next.sourceId, "apple-reminders:EXT-1");
+  assert.equal(done.sourceId, undefined, "one task per source");
+  assert.equal(result.links[nextId].due, "2026-11-06");
+  assert.equal(result.advanced, 1);
+  assert.deepEqual(result.updates, []);
+  const again = plan({ tasks: Object.values(result.db.tasks), links: result.links, items: [weekly({ requestedId: "R1" })] });
+  assert.equal(again.advanced, 0);
+  assert.equal(again.pulled, 0);
+  assert.deepEqual(again.updates, []);
+});
+
+test("a repeating reminder finished in Tempo stays done once Reminders moves it on", () => {
+  const finished = task({ dueDate: "2026-10-30", status: "done", completedAt: T0 + 3000, updatedAt: T0 + 3000 });
+  const first = plan({ tasks: [finished], links: { t1: link({ due: "2026-10-30" }) }, items: [reminder({ due: "2026-10-30", recurring: true })] });
+  assert.equal(first.updates[0].completed, true);
+  // The helper wrote it; EventKit moved the reminder to the next date and added a finished copy.
+  const links = { t1: confirmUpdate(first.links.t1, first.updates[0]) };
+  const second = plan({ tasks: [finished], links, items: [weekly()] });
+  assert.equal(second.db.tasks.t1.status, "done", "not reopened");
+  assert.equal(second.db.tasks.t1.completedAt, T0 + 3000);
+  const next = Object.values(second.db.tasks).find((t) => t.id !== "t1");
+  assert.equal(next.status, "todo");
+  assert.equal(next.dueDate, "2026-11-06");
+  assert.deepEqual(second.updates, []);
+});
+
+test("a repeating reminder moved to a later day without being finished only moves the task", () => {
+  const result = plan({
+    tasks: [task({ dueDate: "2026-10-30" })], links: { t1: link({ due: "2026-10-30" }) },
+    items: [weekly({ doneOccurrences: [{ due: "2026-10-23", completedAt: T0 }] })],
+  });
+  assert.equal(result.advanced, 0);
+  assert.equal(result.db.tasks.t1.status, "todo");
+  assert.equal(result.db.tasks.t1.dueDate, "2026-11-06");
+  assert.deepEqual(Object.keys(result.db.tasks), ["t1"]);
+});
+
+test("a title changed in Tempo carries over to the next occurrence and is written back", () => {
+  const renamed = task({ title: "写周报（新）", dueDate: "2026-10-30", updatedAt: T0 + 1 });
+  const result = plan({ tasks: [renamed], links: { t1: link({ due: "2026-10-30" }) }, items: [weekly()] });
+  const nextId = Object.keys(result.links)[0];
+  assert.equal(result.db.tasks[nextId].title, "写周报（新）");
+  assert.deepEqual(result.updates.map((u) => [u.taskId, u.title]), [[nextId, "写周报（新）"]]);
 });
 
 test("busy minutes count overlaps once, clip to the day and skip all-day events", () => {

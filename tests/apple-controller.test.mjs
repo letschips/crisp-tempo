@@ -6,6 +6,8 @@
 // - F4: a phone edit made between reading and writing is overwritten;
 // - F5: a failed Calendar refresh leaves old events looking current;
 // - F6: unchecking every list, then turning Reminders off and on, picks the default list again.
+// - 0.12.3: a weekly reminder finished in Tempo is reopened by the next sync and its completion lost;
+//   finished on the phone, the task only moves to next week and is never done.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -52,6 +54,17 @@ const task = (fields = {}) => ({
 function fakeReminders(initial = []) {
   const state = { reminders: new Map(initial.map((r) => [r.id, r])), writes: [], calls: [], hooks: {} };
   let seq = 0;
+  const day = (iso, days) => new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+  // Finishing a repeating reminder (repeatDays) moves it to its next date and adds a finished copy, like EventKit.
+  state.finish = (r, at = Date.now()) => {
+    if (!r.repeatDays) { Object.assign(r, { completed: true, completedAt: at }); return; }
+    const copy = { id: `DONE-${++seq}`, title: r.title, listId: r.listId, due: r.due, completed: true, completedAt: at };
+    state.reminders.set(copy.id, copy);
+    Object.assign(r, { due: day(r.due, r.repeatDays), completed: false, modifiedAt: at });
+  };
+  const occurrences = (r) => [...state.reminders.values()]
+    .filter((c) => c.completed && !c.repeatDays && c.title === r.title && c.id !== r.id)
+    .map((c) => ({ due: c.due, completedAt: c.completedAt }));
   const obj = (r) => ({ externalId: `EXT-${r.id}`, listId: "L1", listTitle: "收集箱", notes: "", due: null, completed: false, completedAt: null, modifiedAt: T0, ...r });
   globalThis.helper = async (command, request) => {
     state.calls.push(command);
@@ -66,7 +79,7 @@ function fakeReminders(initial = []) {
       const missing = [];
       for (const item of request.items) {
         const r = state.reminders.get(item.id);
-        if (r) items.push({ ...obj(r), requestedId: item.id });
+        if (r) items.push({ ...obj(r), requestedId: item.id, ...(r.repeatDays ? { recurring: true, doneOccurrences: occurrences(r) } : {}) });
         else missing.push(item.id);
       }
       return { reminders: open, items, missing };
@@ -79,7 +92,9 @@ function fakeReminders(initial = []) {
         const now = obj(r);
         const changed = Object.keys(u.expect ?? {}).filter((k) => (u.expect[k] ?? null) !== (now[k] ?? null));
         if (changed.length) return { ok: false, code: "changed", message: changed.join() };
-        for (const k of ["title", "notes", "due", "completed"]) if (u[k] !== undefined) r[k] = u[k];
+        for (const k of ["title", "notes", "due"]) if (u[k] !== undefined) r[k] = u[k];
+        if (u.completed === true && !r.completed) state.finish(r);
+        else if (u.completed !== undefined) r.completed = u.completed;
         r.modifiedAt = Date.now();
         return { ok: true, reminder: obj(r) };
       });
@@ -297,4 +312,26 @@ test("a change reported by Reminders syncs at once; one burst makes one sync; th
 
   await controller.setEnabled("reminders", false);
   assert.equal(globalThis.appleWatch.running, false);
+});
+
+test("0.12.3: a weekly reminder finished in Tempo or on the phone: that task is done, the next week's task is open", async () => {
+  const fake = fakeReminders([{ id: "R1", title: "写周报", listId: "L1", due: "2026-10-30", repeatDays: 7 }]);
+  const { store, controller } = setup({ tasks: [task({ dueDate: "2026-10-30" })], apple: { links: { t1: linkOf("R1", { due: "2026-10-30" }) } } });
+  store.data.database.tasks.t1 = { ...store.data.database.tasks.t1, status: "done", completedAt: T0 + 1, updatedAt: T0 + 1 };
+  await controller.syncNow();
+  await controller.syncNow();
+  const tasks = () => Object.values(store.data.database.tasks).sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
+  assert.deepEqual(tasks().map((t) => [t.dueDate, t.status]), [["2026-10-30", "done"], ["2026-11-06", "todo"]]);
+  assert.equal(store.data.database.tasks.t1.completedAt, T0 + 1);
+  assert.equal(fake.reminders.get("R1").due, "2026-11-06");
+  assert.equal(fake.reminders.get("R1").completed, false);
+
+  // The next one is finished on the phone.
+  fake.finish(fake.reminders.get("R1"), T0 + 99);
+  await controller.syncNow();
+  await controller.syncNow();
+  assert.deepEqual(tasks().map((t) => [t.dueDate, t.status]), [["2026-10-30", "done"], ["2026-11-06", "done"], ["2026-11-13", "todo"]]);
+  assert.equal(tasks()[1].completedAt, T0 + 99);
+  assert.equal([...fake.reminders.values()].filter((r) => r.completed).length, 2, "one finished copy per occurrence, nothing written twice");
+  assert.equal(Object.values(store.data.apple.links).filter((l) => !l.off).length, 1);
 });

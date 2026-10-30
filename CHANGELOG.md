@@ -2,6 +2,12 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.12.3] - 2026-10-30
+
+### Fixed
+- 重复提醒（每周、每月等）在 Tempo 里勾掉后不再被下次同步打回未完成；这一次记为完成，同时生成下一次的任务。
+- 在提醒事项或 iPhone 上完成重复提醒，Tempo 里对应任务现在会记为完成并生成下一次的任务，原来只会改日期。
+
 ## [0.12.2] - 2026-10-29
 
 ### Changed

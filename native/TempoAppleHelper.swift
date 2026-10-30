@@ -15,7 +15,10 @@
 //   reminder-lists              lists that hold reminders
 //   calendars                   calendars that hold events
 //   reminders                   {"lists":[id],"items":[{"id","externalId"}]}: open reminders in the lists,
-//                               plus the given items in any state and list; items not found are in "missing"
+//                               plus the given items in any state and list; items not found are in "missing".
+//                               A repeating item also carries "doneOccurrences": recent finished copies
+//                               ({"due","completedAt"}) in its list with its title, which Reminders adds
+//                               each time an occurrence is finished (the item itself moves to its next date)
 //   apply-reminders             {"updates":[{"id","externalId","listId"?,"title"?,"notes"?,"due"?,"completed"?,"expect"?}],
 //                                "creates":[{"key","listId","title","notes"?,"due"?}]}
 //                               an update whose "expect" values no longer match the reminder is refused
@@ -137,6 +140,7 @@ func reminderObject(_ r: EKReminder) -> [String: Any] {
     "due": dueString(r.dueDateComponents),
     "dueHasTime": r.dueDateComponents?.hour != nil,
     "completed": r.isCompleted,
+    "recurring": r.hasRecurrenceRules,
     "completedAt": millis(r.completionDate),
     "modifiedAt": millis(r.lastModifiedDate),
   ]
@@ -215,12 +219,28 @@ func runReminders(_ request: [String: Any]) throws -> [String: Any] {
   }
   var found: [[String: Any]] = []
   var missing: [String] = []
+  // Finished copies of repeating items, fetched once per list.
+  var finishedByList: [String: [EKReminder]] = [:]
+  let since = Date().addingTimeInterval(-60 * 24 * 3600)
+  func doneOccurrences(_ r: EKReminder) -> [[String: Any]] {
+    guard let list = r.calendar else { return [] }
+    if finishedByList[list.calendarIdentifier] == nil {
+      let predicate = store.predicateForCompletedReminders(withCompletionDateStarting: since, ending: nil, calendars: [list])
+      finishedByList[list.calendarIdentifier] = fetchReminders(predicate)
+    }
+    return (finishedByList[list.calendarIdentifier] ?? [])
+      .filter { $0.title == r.title && !$0.hasRecurrenceRules && $0.calendarItemIdentifier != r.calendarItemIdentifier }
+      .sorted { ($0.completionDate ?? .distantPast) > ($1.completionDate ?? .distantPast) }
+      .prefix(10)
+      .map { ["due": dueString($0.dueDateComponents), "completedAt": millis($0.completionDate)] }
+  }
   for item in (request["items"] as? [[String: Any]]) ?? [] {
     let id = item["id"] as? String
     let externalId = item["externalId"] as? String
     if let r = findReminder(id: id, externalId: externalId, listId: item["listId"] as? String) {
       var object = reminderObject(r)
       object["requestedId"] = id ?? NSNull()
+      if r.hasRecurrenceRules { object["doneOccurrences"] = doneOccurrences(r) }
       found.append(object)
     } else if let id {
       missing.append(id)

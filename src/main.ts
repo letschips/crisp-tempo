@@ -1,4 +1,4 @@
-import { Plugin, PluginSettingTab, Setting, Notice, addIcon, type App, type WorkspaceLeaf } from "obsidian";
+import { Plugin, PluginSettingTab, Setting, Notice, addIcon, setIcon, type App, type WorkspaceLeaf } from "obsidian";
 import { TempoStore } from "./core/store";
 import { TempoView, TEMPO_VIEW_TYPE } from "./views/TempoView";
 import { detectObsidianHant, detectObsidianLocale, lt, t, tf, zhText, type LanguageSetting } from "./services/i18n";
@@ -301,8 +301,10 @@ class CrispTempoSettingTab extends PluginSettingTab {
     const data = store.data;
     const locale = data.locale || "zh";
 
-    const headerEl = containerEl.createDiv({ cls: "tempo-settings-tab-header" });
-    headerEl.createEl("h2", { text: `Crisp Tempo (v${this.plugin.manifest.version})` });
+    const brandHeader = containerEl.createDiv({ cls: "crisp-brand-header" });
+    setIcon(brandHeader.createDiv({ cls: "crisp-brand-logo" }), "crisp-tempo");
+    brandHeader.createEl("h2", { text: "Crisp Tempo" });
+    containerEl.createEl("p", { text: "把待办安排明白", cls: "crisp-brand-slogan" });
 
     // 0. Quick Open View Action
     new Setting(containerEl)

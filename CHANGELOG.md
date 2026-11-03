@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.13.0] - 2026-11-03
+
+### Added
+- 新增只读接口 `getActionOverview()`，供 Crisp Launchpad 显示今天的行动
+
 ## [0.12.4] - 2026-11-02
 
 ### Changed

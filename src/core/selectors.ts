@@ -417,3 +417,55 @@ export function getVisualOrderTasks(tasks: Task[], activeNav: string): Task[] {
   // Other views preserve order or sorted by priority/dueDate
   return [...tasks];
 }
+
+export type ActionBucket = "overdue" | "today" | "waiting" | "inbox" | "upcoming" | "anytime" | "done";
+
+/** One top-level task as Crisp Launchpad sees it. */
+export interface ActionSummary {
+  id: string;
+  title: string;
+  status: Task["status"];
+  bucket: ActionBucket;
+  dueDate?: string;
+  startDate?: string;
+  focusDate?: string;
+  projectTitle?: string;
+  sourceId?: string;
+  completedAt?: number;
+}
+
+/**
+ * Top-level tasks bucketed for the ANKS dashboard. Open tasks in Tempo's Today list are always
+ * "today" or "overdue" (due before today), so the dashboard and the Today view agree. Subtasks,
+ * canceled and someday tasks are left out; done tasks only when finished today.
+ */
+export function getActionOverview(db: Pick<TodoDatabase, "tasks" | "projects">, today = getTodayString()): { date: string; tasks: ActionSummary[] } {
+  const tasks: ActionSummary[] = [];
+  for (const task of getTopLevelTasks(db.tasks)) {
+    if (task.status === "canceled" || task.availability === "someday") continue;
+    let bucket: ActionBucket;
+    if (task.status === "done") {
+      if (!isCompletedToday(task, today)) continue;
+      bucket = "done";
+    } else if (task.triage !== "processed") bucket = "inbox";
+    else if (task.status === "waiting") bucket = "waiting";
+    else if (task.dueDate && task.dueDate < today) bucket = "overdue";
+    else if (isScheduledForToday(task, today)) bucket = "today";
+    else if ((task.startDate && task.startDate > today) || (task.dueDate && task.dueDate > today)) bucket = "upcoming";
+    else bucket = "anytime";
+    const project = task.projectId ? db.projects[task.projectId] : undefined;
+    tasks.push({
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      bucket,
+      ...(task.dueDate ? { dueDate: task.dueDate } : {}),
+      ...(task.startDate ? { startDate: task.startDate } : {}),
+      ...(task.focusDate ? { focusDate: task.focusDate } : {}),
+      ...(project ? { projectTitle: project.title } : {}),
+      ...(task.sourceId ? { sourceId: task.sourceId } : {}),
+      ...(task.completedAt ? { completedAt: task.completedAt } : {}),
+    });
+  }
+  return { date: today, tasks };
+}

@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.13.1] - 2026-11-03
+
+### Changed
+- 已完成任务的只读记录附带来源标识，Crisp Launchpad 复盘可准确区分同名任务
+
 ## [0.13.0] - 2026-11-03
 
 ### Added

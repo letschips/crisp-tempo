@@ -83,6 +83,8 @@ export interface CompletedTaskSummary {
   id: string;
   title: string;
   completedAt: number;
+  /** Stable origin for consumers reconciling completed source tasks. */
+  sourceId?: string;
   /** For a subtask, the task it belongs to. */
   parentTitle?: string;
   projectTitle?: string;
@@ -103,6 +105,7 @@ export function getCompletedOn(db: Pick<TodoDatabase, "tasks" | "projects">, dat
         id: task.id,
         title: task.title,
         completedAt: task.completedAt ?? 0,
+        ...(task.sourceId ? { sourceId: task.sourceId } : {}),
         ...(parent ? { parentTitle: parent.title } : {}),
         ...(project ? { projectTitle: project.title } : {}),
       };

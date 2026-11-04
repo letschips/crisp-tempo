@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.14.0] - 2026-11-04
+
+### Added
+- 新接口 `openQuickAddModal()`：在当前页面直接弹出新建任务弹窗，不切换到 Tempo；Crisp Launchpad 的「新建行动」用它
+
 ## [0.13.1] - 2026-11-03
 
 ### Changed

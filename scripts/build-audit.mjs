@@ -45,6 +45,7 @@ import { h, render } from "preact";
 import { App } from "./src/ui/App";
 import * as store from "./src/core/store";
 import { createInitialMockDatabase } from "./src/core/mock-data";
+import { openFloatingQuickAdd } from "./src/ui/floating-quick-add";
 
 (window as any).tempoAudit = {
   mount: (plugin: any, leafOrId?: any, maybeId = "app") => {
@@ -71,6 +72,7 @@ import { createInitialMockDatabase } from "./src/core/mock-data";
     },
   },
   mock: createInitialMockDatabase,
+  openFloatingQuickAdd: () => openFloatingQuickAdd(store.TempoStore.get((window as any).plugin)),
 };
 `;
 

@@ -2820,3 +2820,19 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   margin-bottom: 1.25rem;
   line-height: 1.45;
 }
+
+/* Floating new-task dialog (openQuickAddModal): the host borrows .tempo-root for its colour
+   variables but must not take page space or block clicks outside the dialog's own backdrop. */
+.tempo-root.tempo-floating-host {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+  padding: 0 !important;
+  overflow: visible;
+  pointer-events: none;
+  z-index: var(--layer-modal, 50);
+}
+.tempo-root.tempo-floating-host > * {
+  pointer-events: auto;
+}

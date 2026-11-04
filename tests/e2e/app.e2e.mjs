@@ -1750,6 +1750,43 @@ await scenario('r12_apple_reminders_calendar', async () => {
   return { events: 3, capacity: line, saved: true, linkFlow: true, mobileFit: fit };
 });
 
+/* r13 Floating new-task dialog (openQuickAddModal, for Crisp Launchpad). Failure modes:
+   - it renders inside the Tempo pane instead of over the page, or is unstyled outside .tempo-root;
+   - saving does not reach disk or creates a different task shape from the in-view dialog;
+   - Escape or the close button leaves the host behind, or still creates a task;
+   - opening twice stacks two dialogs. */
+await scenario('r13_floating_quick_add', async () => {
+  const p = await boot();
+  const host = p.locator('body > .tempo-floating-host');
+  const open = () => p.evaluate(() => tempoAudit.openFloatingQuickAdd());
+  await open();
+  await open();
+  assert.equal(await host.count(), 1, 'opening twice keeps one dialog');
+  assert.equal(await p.locator('#app .tempo-window-card').count(), 0, 'not inside the Tempo pane');
+  const card = host.locator('.tempo-window-card');
+  const box = await card.boundingBox();
+  const bg = await card.evaluate((el) => getComputedStyle(el).backgroundColor);
+  assert.ok(box && box.width > 300, 'dialog is laid out');
+  assert.notEqual(bg, 'rgba(0, 0, 0, 0)', 'dialog keeps its surface');
+  await p.waitForFunction(() => document.activeElement?.closest('.tempo-floating-host'));
+  await p.keyboard.type('Floating task');
+  await p.keyboard.press('Enter');
+  await p.waitForFunction(() => Object.values(fixture.disk.database.tasks).some((t) => t.title === 'Floating task'));
+  assert.equal(await host.count(), 0, 'saving closes the dialog');
+  const task = Object.values((await disk(p)).database.tasks).find((t) => t.title === 'Floating task');
+  assert.equal(task.triage, 'inbox');
+  assert.equal(task.status, 'todo');
+
+  await open();
+  await p.keyboard.type('Never saved');
+  await p.keyboard.press('Escape');
+  assert.equal(await host.count(), 0, 'Escape closes the dialog');
+  await p.waitForTimeout(400);
+  assert.ok(!Object.values((await disk(p)).database.tasks).some((t) => t.title === 'Never saved'));
+  await close(p);
+  return { saved: task.id, escaped: true };
+});
+
 await scenario('no_uncaught_page_errors', async () => {
   assert.deepEqual(pageErrors, [], 'the UI must not throw during any scenario');
   return { pageErrors: pageErrors.length };

@@ -19,6 +19,7 @@ import {
   sortByStatus,
 } from "../core/selectors";
 import { busyMinutes } from "../core/apple-sync";
+import { buildNewTask, type NewTaskInput } from "../core/new-task";
 import { FOCUS_WRAP_UP_HOURS, TempoStore } from "../core/store";
 import type { Cycle, Project, Task, TaskPriority, TaskStatus, TodoDatabase } from "../core/types";
 import { getTodayString } from "../services/date-service";
@@ -427,40 +428,13 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
   };
 
   // Add task from TaskCreateModal
-  const handleAddTask = (params: {
-    title: string;
-    description?: string;
-    triage: "inbox" | "processed";
-    availability?: "anytime" | "someday";
-    priority?: TaskPriority;
-    focusDate?: string;
-    startDate?: string;
-    dueDate?: string;
-    projectId?: string;
-    cycleId?: string;
-  }) => {
+  const handleAddTask = (params: NewTaskInput) => {
     if (!hasLicense()) {
       promptForLicense();
       return;
     }
-    const newId = `task-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    const newTask: Task = {
-      id: newId,
-      title: params.title,
-      description: params.description,
-      status: "todo",
-      triage: params.triage,
-      availability: params.availability || "anytime",
-      priority: params.priority || "none",
-      projectId: params.projectId,
-      cycleId: params.cycleId,
-      focusDate: params.focusDate,
-      startDate: params.startDate,
-      dueDate: params.dueDate,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      order: `z${Date.now()}`,
-    };
+    const newTask = buildNewTask(params);
+    const newId = newTask.id;
 
     store.updateDatabase((prev) => ({
       ...prev,

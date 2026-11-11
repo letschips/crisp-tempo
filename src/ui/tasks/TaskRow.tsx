@@ -1,7 +1,8 @@
 import type { JSX } from "preact";
 import { getTaskEffort } from "../../core/selectors";
 import type { Project, Task, TaskStatus } from "../../core/types";
-import { formatDateDisplay, getTodayString, isOverdue } from "../../services/date-service";
+import { DUE_SOON_DAYS, daysUntil, formatDateDisplay, getTodayString, isOverdue } from "../../services/date-service";
+import { formatDueCountdown } from "../../services/due-countdown";
 import type { ActiveFocus } from "../../services/focus-bridge";
 import { t, tf, type Locale, type TranslationKey } from "../../services/i18n";
 import { PriorityIcon, StatusIcon } from "../icons/Icons";
@@ -50,6 +51,9 @@ export function TaskRow({
   const open = task.status !== "done" && task.status !== "canceled";
   const estimate = open ? getTaskEffort(task, childrenMap ?? new Map([[task.id, subtasks]])).minutes : 0;
   const startsLater = open && !!task.startDate && task.startDate > today;
+  // Open work counts down to its due date; done and canceled rows keep the plain date.
+  const dueDays = open && task.dueDate ? daysUntil(task.dueDate, today) : null;
+  const dueSoon = dueDays !== null && dueDays >= 1 && dueDays <= DUE_SOON_DAYS;
 
   // Subtask progress
   const doneSubtasks = subtasks.filter((s) => s.status === "done").length;
@@ -148,11 +152,17 @@ export function TaskRow({
       {/* 6. Meta: Date Tag */}
       {task.dueDate && (
         <div
-          className={`tempo-date-tag ${overdue ? "is-overdue" : isTaskToday ? "is-today" : ""}`}
+          className={`tempo-date-tag ${overdue ? "is-overdue" : dueSoon ? "is-due-soon" : isTaskToday ? "is-today" : ""}`}
           title={`${t("dueDate", locale)}: ${task.dueDate}`}
         >
-          {overdue ? `${t("overdue", locale)} ` : ""}
-          {formatDateDisplay(task.dueDate, locale)}
+          {dueDays !== null ? (
+            formatDueCountdown(dueDays, locale)
+          ) : (
+            <>
+              {overdue ? `${t("overdue", locale)} ` : ""}
+              {formatDateDisplay(task.dueDate, locale)}
+            </>
+          )}
         </div>
       )}
     </div>

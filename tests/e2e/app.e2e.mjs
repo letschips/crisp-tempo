@@ -867,6 +867,41 @@ await scenario('r5_upcoming_sorted_by_date', async () => {
   return { order };
 });
 
+await scenario('r14_due_tags_count_down', async () => {
+  // Open work shows days left instead of a bare date; the exact date stays in the tooltip.
+  const raw = dbJson({
+    late: mkTask('late', 'Late', { dueDate: sgDate(-2) }),
+    now: mkTask('now', 'Now', { dueDate: sgDate(0) }),
+    soon: mkTask('soon', 'Soon', { dueDate: sgDate(1) }),
+    three: mkTask('three', 'Three', { dueDate: sgDate(3) }),
+    far: mkTask('far', 'Far', { dueDate: sgDate(9) }),
+  });
+  const p = await boot({ adapter: true, adapterRaw: raw });
+  const tag = async (title) => {
+    const el = p.locator('.tempo-main-card .tempo-task-row').filter({ hasText: title }).locator('.tempo-date-tag:not(.tempo-start-tag)');
+    return { text: (await el.innerText()).trim(), cls: await el.getAttribute('class'), title: await el.getAttribute('title') };
+  };
+  const late = await tag('Late');
+  assert.equal(late.text, '逾期 2 天');
+  assert.match(late.cls, /is-overdue/);
+  assert.equal(late.title, `截止日期: ${sgDate(-2)}`);
+  const now = await tag('Now');
+  assert.equal(now.text, '今天截止');
+  assert.match(now.cls, /is-today/);
+  await navTo(p, '接下来');
+  const soon = await tag('Soon');
+  assert.equal(soon.text, '明天截止');
+  assert.match(soon.cls, /is-due-soon/);
+  const three = await tag('Three');
+  assert.equal(three.text, '还剩 3 天');
+  assert.match(three.cls, /is-due-soon/);
+  const far = await tag('Far');
+  assert.equal(far.text, '还剩 9 天');
+  assert.doesNotMatch(far.cls, /is-due-soon|is-overdue/);
+  await close(p);
+  return { late: late.text, now: now.text, soon: soon.text, three: three.text, far: far.text };
+});
+
 await scenario('r5_cycle_badge_follows_dates', async () => {
   const raw = dbJson({}, { cycles: {
     old: { id: 'old', title: 'Ended cycle', startDate: sgDate(-20), endDate: sgDate(-10), status: 'current' },

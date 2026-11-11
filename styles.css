@@ -827,6 +827,12 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   background-color: rgba(248, 113, 113, 0.12);
 }
 
+.tempo-date-tag.is-due-soon {
+  color: var(--text-warning, #d99a2b);
+  font-weight: 500;
+  background-color: rgba(217, 154, 43, 0.12);
+}
+
 /* 3. Right Inspector Card */
 .tempo-inspector-card {
   width: 320px;

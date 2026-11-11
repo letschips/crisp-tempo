@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.15.0] - 2026-11-11
+
+### Added
+- 未完成任务的截止日期改为倒计时：「还剩 N 天」「明天截止」「今天截止」「逾期 N 天」；3 天内到期的用提醒色标出，确切日期在悬停提示里。已完成和已取消的任务仍显示日期。
+
 ## [0.14.0] - 2026-11-04
 
 ### Added

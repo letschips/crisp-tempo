@@ -62,3 +62,16 @@ export function isOverdue(dueDate?: string): boolean {
   if (!dueDate) return false;
   return dueDate < getTodayString();
 }
+
+/** Whole calendar days from `today` to `dateStr`: 0 on the day, negative once it has passed.
+    Counted on UTC midnights so a daylight-saving change never turns a day into 0.96 days. */
+export function daysUntil(dateStr: string, today: string = getTodayString()): number {
+  const toUtc = (value: string) => {
+    const [year, month, day] = value.split("-").map(Number);
+    return Date.UTC(year, month - 1, day);
+  };
+  return Math.round((toUtc(dateStr) - toUtc(today)) / 86_400_000);
+}
+
+/** Days at or under this count as "due soon" and get the warning colour. */
+export const DUE_SOON_DAYS = 3;

@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.18.0] - 2026-11-11
+
+### Added
+- 装了 Crisp Search 0.8.0 时，搜索面板多一个「任务」页签：按标题、拼音、下一步和描述搜任务，显示所属项目和截止倒计时，回车跳到 Tempo 里的这条任务。已完成的任务也能搜到，排在未完成的后面；已取消的不列出。
+
 ## [0.17.0] - 2026-11-11
 
 ### Added

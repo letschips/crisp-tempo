@@ -2,6 +2,12 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.17.0] - 2026-11-11
+
+### Added
+- 其他插件转来的任务可以带截止日期：带日期的任务直接按日期进「今天」或「接下来」，不停在收集箱。Crisp Launchpad 0.11.0 用它把内容项目的计划发布日变成一条「发布」行动。
+- 新接口 `rescheduleSourceTask()`：来源插件改期时，只有任务还未完成、截止日期还是它上次给的那个才会改；你在 Tempo 里自己改过的日期保持不变。`sourceTasksApiVersion` 为 2。
+
 ## [0.16.0] - 2026-11-11
 
 ### Added

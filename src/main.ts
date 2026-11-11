@@ -8,6 +8,8 @@ import {
   findSourceTask,
   toSourceSnapshot,
   upsertSourceTask,
+  rescheduleSourceTask,
+  type SourceRescheduleInput,
   type SourceTaskInput,
   type SourceTaskSnapshot,
 } from "./services/source-tasks";
@@ -146,6 +148,28 @@ export default class CrispTempoPlugin extends Plugin {
     await store.flush();
     if (store.hasPendingSave) throw new Error(lt(`Crisp Tempo 保存失败：${store.saveError ?? "未知原因"}`, `Crisp Tempo failed to save: ${store.saveError ?? "unknown reason"}`));
     return toSourceSnapshot(result.task);
+  }
+
+  /** 2: createTaskFromSource accepts dueDate, snapshots carry dueDate, rescheduleSourceTask exists. */
+  get sourceTasksApiVersion(): number {
+    return 2;
+  }
+
+  /**
+   * Changes the due date of the task made for a source, only while that task is open and still has
+   * the date the caller last set (`ifDueDate`). Crisp Launchpad uses it when a content project's
+   * planned publish date moves. Resolves after the change is on disk.
+   */
+  async rescheduleSourceTask(input: SourceRescheduleInput): Promise<{ status: "updated" | "kept" | "missing"; task?: SourceTaskSnapshot }> {
+    const store = await this.readyStore();
+    const result = rescheduleSourceTask(store.data!.database, input, Date.now());
+    if (result.status === "updated") {
+      // Like createTaskFromSource, kept out of undo: the date belongs to the plugin that sent it.
+      store.updateDatabase(() => result.db, false);
+      await store.flush();
+      if (store.hasPendingSave) throw new Error(lt(`Crisp Tempo 保存失败：${store.saveError ?? "未知原因"}`, `Crisp Tempo failed to save: ${store.saveError ?? "unknown reason"}`));
+    }
+    return { status: result.status, ...(result.task ? { task: toSourceSnapshot(result.task) } : {}) };
   }
 
   private closeFloatingQuickAdd: (() => void) | null = null;

@@ -1568,6 +1568,16 @@ await scenario('r10_rows_show_focus_estimate_and_next_step', async () => {
   await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).setActiveFocus({ taskId: 'task-1', state: 'paused' }));
   assert.equal((await row('Primary Task').locator('.tempo-row-focus').innerText()).trim(), '已暂停');
   assert.equal(await row('Finished thing').locator('.tempo-row-estimate, .tempo-task-next').count(), 0, 'finished rows stay quiet');
+  // Focus already spent shows against the estimate; going past the estimate is marked.
+  const session = (id, minutes) => ({ taskId: 'task-1', entry: { id, startedAt: Date.now() - 60000, endedAt: Date.now(), minutes, completed: true, pomodoro: true } });
+  await p.evaluate((items) => tempoAudit.store.TempoStore.get(plugin).recordFocusEntries(items), [session('fs-1', 25)]);
+  const chip = row('Primary Task').locator('.tempo-row-estimate');
+  assert.equal((await chip.innerText()).trim(), '25 / 45 分钟');
+  assert.equal(await chip.getAttribute('title'), '已专注 25 分钟 · 预计 45 分钟');
+  assert.doesNotMatch(await chip.getAttribute('class'), /is-over/);
+  await p.evaluate((items) => tempoAudit.store.TempoStore.get(plugin).recordFocusEntries(items), [session('fs-2', 25)]);
+  assert.equal((await chip.innerText()).trim(), '50 / 45 分钟');
+  assert.match(await chip.getAttribute('class'), /is-over/);
   await close(p);
 
   const m = await boot({ width: 390, height: 800, mobile: true, paneWidth: 390 });

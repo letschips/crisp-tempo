@@ -794,6 +794,10 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   font-variant-numeric: tabular-nums;
 }
 
+.tempo-row-estimate.is-over {
+  color: var(--text-warning, #d99a2b);
+}
+
 .tempo-start-tag {
   color: var(--text-muted);
 }

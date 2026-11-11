@@ -138,6 +138,24 @@ export function cleanFocusLog(raw: unknown): { log: FocusLog; dropped: number } 
   return { log, dropped };
 }
 
+/**
+ * Focus minutes on a task and the subtasks under it, at every level. Canceled subtasks are left
+ * out, the same way their estimates are, so the row compares like with like.
+ */
+export function taskFocusMinutes(
+  task: { id: string },
+  childrenMap: Map<string, { id: string; status: string }[]>,
+  log: FocusLog | undefined,
+  seen: Set<string> = new Set(),
+): number {
+  seen.add(task.id);
+  let minutes = (log?.[task.id] ?? []).reduce((sum, entry) => sum + entry.minutes, 0);
+  for (const child of childrenMap.get(task.id) ?? []) {
+    if (child.status !== "canceled" && !seen.has(child.id)) minutes += taskFocusMinutes(child, childrenMap, log, seen);
+  }
+  return minutes;
+}
+
 export function summarizeFocus(entries: readonly FocusEntry[] | undefined): FocusSummary {
   const summary: FocusSummary = { minutes: 0, completed: 0, interrupted: 0, sessions: 0, lastEndedAt: 0 };
   for (const entry of entries ?? []) {

@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.16.0] - 2026-11-11
+
+### Added
+- 填了预计用时的任务，在 Crisp Focus 里专注过之后，任务行显示「已专注 / 预计」，例如「25 / 45 分钟」；超过预计时用提醒色标出。子任务的专注时间计入父任务。
+
 ## [0.15.0] - 2026-11-11
 
 ### Added

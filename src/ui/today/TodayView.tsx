@@ -2,7 +2,7 @@ import type { JSX } from "preact";
 import type { DayCapacity } from "../../core/selectors";
 import type { CalendarEvent } from "../../core/apple-sync";
 import type { Project, Task } from "../../core/types";
-import type { ActiveFocus } from "../../services/focus-bridge";
+import type { ActiveFocus, FocusLog } from "../../services/focus-bridge";
 import { formatHeaderDate } from "../../services/date-service";
 import { t, tf, type Locale } from "../../services/i18n";
 import { PlusIcon, TodayIcon } from "../icons/Icons";
@@ -14,6 +14,8 @@ interface TodayViewProps {
   locale: Locale;
   /** Subtasks grouped by parent, built once by the caller instead of scanned per row. */
   childrenMap: Map<string, Task[]>;
+  /** Crisp Focus time by task, for the rows. */
+  focusLog?: FocusLog;
   projects: Record<string, Project>;
   selectedTaskId: string | null;
   onSelectTask: (taskId: string) => void;
@@ -85,6 +87,7 @@ export function TodayView({
   tasks,
   locale,
   childrenMap,
+  focusLog,
   projects,
   selectedTaskId,
   onSelectTask,
@@ -151,6 +154,7 @@ export function TodayView({
                     project={task.projectId ? projects[task.projectId] : undefined}
                     subtasks={childrenMap.get(task.id) ?? []}
                     childrenMap={childrenMap}
+                    focusLog={focusLog}
                     focusState={activeFocus?.taskId === task.id ? activeFocus.state : null}
                     isSelected={selectedTaskId === task.id}
                     onSelect={() => onSelectTask(task.id)}
@@ -175,6 +179,7 @@ export function TodayView({
                     project={task.projectId ? projects[task.projectId] : undefined}
                     subtasks={childrenMap.get(task.id) ?? []}
                     childrenMap={childrenMap}
+                    focusLog={focusLog}
                     focusState={activeFocus?.taskId === task.id ? activeFocus.state : null}
                     isSelected={selectedTaskId === task.id}
                     onSelect={() => onSelectTask(task.id)}
@@ -199,6 +204,7 @@ export function TodayView({
                     project={task.projectId ? projects[task.projectId] : undefined}
                     subtasks={childrenMap.get(task.id) ?? []}
                     childrenMap={childrenMap}
+                    focusLog={focusLog}
                     focusState={activeFocus?.taskId === task.id ? activeFocus.state : null}
                     isSelected={selectedTaskId === task.id}
                     onSelect={() => onSelectTask(task.id)}
@@ -223,6 +229,7 @@ export function TodayView({
                     project={task.projectId ? projects[task.projectId] : undefined}
                     subtasks={childrenMap.get(task.id) ?? []}
                     childrenMap={childrenMap}
+                    focusLog={focusLog}
                     focusState={activeFocus?.taskId === task.id ? activeFocus.state : null}
                     isSelected={selectedTaskId === task.id}
                     onSelect={() => onSelectTask(task.id)}

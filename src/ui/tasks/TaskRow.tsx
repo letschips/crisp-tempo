@@ -3,7 +3,7 @@ import { getTaskEffort } from "../../core/selectors";
 import type { Project, Task, TaskStatus } from "../../core/types";
 import { DUE_SOON_DAYS, daysUntil, formatDateDisplay, getTodayString, isOverdue } from "../../services/date-service";
 import { formatDueCountdown } from "../../services/due-countdown";
-import type { ActiveFocus } from "../../services/focus-bridge";
+import { taskFocusMinutes, type ActiveFocus, type FocusLog } from "../../services/focus-bridge";
 import { t, tf, type Locale, type TranslationKey } from "../../services/i18n";
 import { PriorityIcon, StatusIcon } from "../icons/Icons";
 import { FOCUS_STATE_KEYS } from "../layout/Inspector";
@@ -25,6 +25,8 @@ interface TaskRowProps {
   childrenMap?: Map<string, Task[]>;
   /** What Crisp Focus is doing on this task, when it is the one being timed. */
   focusState?: ActiveFocus["state"] | null;
+  /** Crisp Focus time by task, shown against the estimate. */
+  focusLog?: FocusLog;
   isSelected: boolean;
   onSelect: () => void;
   onToggleStatus: () => void;
@@ -37,6 +39,7 @@ export function TaskRow({
   subtasks = [],
   childrenMap,
   focusState,
+  focusLog,
   isSelected,
   onSelect,
   onToggleStatus,
@@ -50,6 +53,7 @@ export function TaskRow({
   // Open work shows what it needs next; finished rows stay quiet.
   const open = task.status !== "done" && task.status !== "canceled";
   const estimate = open ? getTaskEffort(task, childrenMap ?? new Map([[task.id, subtasks]])).minutes : 0;
+  const focused = estimate > 0 ? taskFocusMinutes(task, childrenMap ?? new Map([[task.id, subtasks]]), focusLog) : 0;
   const startsLater = open && !!task.startDate && task.startDate > today;
   // Open work counts down to its due date; done and canceled rows keep the plain date.
   const dueDays = open && task.dueDate ? daysUntil(task.dueDate, today) : null;
@@ -129,7 +133,13 @@ export function TaskRow({
       )}
 
       {estimate > 0 && (
-        <span className="tempo-row-estimate" title={t("estimate", locale)}>{tf("estimateShort", locale, { m: estimate })}</span>
+        focused > 0 ? (
+          <span className={`tempo-row-estimate${focused > estimate ? " is-over" : ""}`} title={tf("focusOfEstimateTitle", locale, { done: focused, m: estimate })}>
+            {tf("focusOfEstimate", locale, { done: focused, m: estimate })}
+          </span>
+        ) : (
+          <span className="tempo-row-estimate" title={t("estimate", locale)}>{tf("estimateShort", locale, { m: estimate })}</span>
+        )
       )}
 
       {/* 5. Meta: Project Tag */}

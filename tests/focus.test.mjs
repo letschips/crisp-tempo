@@ -35,6 +35,7 @@ globalThis.window = { app: { appId: "test-device" } };
 const {
   TempoStore, createEmptyDatabase, focusEntryFromEvent, addFocusEntry, cleanFocusLog, summarizeFocus,
   activeFocusFromSnapshot, focusPluginStatus, startFocusForTask, focusSessionLog, entriesFromSessionLog,
+  taskFocusMinutes,
 } = await import(pathToFileURL(path.join(outDir, "focus.mjs")).href);
 
 const TASK = { source: "crisp-tempo", id: "task-1", title: "修复转写回链" };
@@ -232,4 +233,23 @@ test("a catch-up that fails to save throws, and the next start records it again"
   await fresh.load();
   assert.equal(fresh.focusLog["task-1"], undefined, "nothing reached the disk");
   assert.equal(await fresh.recordFocusEntries(items), 1);
+});
+
+// Focus time against the estimate on task rows (0.16.0). Failure modes:
+// - focus spent on a subtask is missing from its parent's row, while the estimate is summed from subtasks;
+// - a canceled subtask's focus is counted although its estimate is not;
+// - a task with no focus entries shows NaN or throws; a parent loop never ends.
+test("row focus minutes add up the task and its subtasks at every level, skipping canceled ones", () => {
+  const e = (id, minutes) => ({ id, startedAt: 1, endedAt: 2, minutes, completed: true, pomodoro: true });
+  const parent = { id: "p", status: "todo" };
+  const child = { id: "c", status: "done" };
+  const grandchild = { id: "g", status: "todo" };
+  const dropped = { id: "x", status: "canceled" };
+  const children = new Map([["p", [child, dropped]], ["c", [grandchild]]]);
+  const log = { p: [e("1", 25)], c: [e("2", 25), e("3", 9)], g: [e("4", 10)], x: [e("5", 50)] };
+  assert.equal(taskFocusMinutes(parent, children, log), 69);
+  assert.equal(taskFocusMinutes(child, children, log), 44);
+  assert.equal(taskFocusMinutes(parent, children, {}), 0);
+  assert.equal(taskFocusMinutes(parent, children, undefined), 0);
+  assert.equal(taskFocusMinutes(parent, new Map([["p", [child]], ["c", [parent]]]), log), 59, "a loop is walked once");
 });

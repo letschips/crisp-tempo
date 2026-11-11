@@ -1,7 +1,7 @@
 import type { JSX } from "preact";
 import { getProgress } from "../../core/selectors";
 import type { Project, Task } from "../../core/types";
-import type { ActiveFocus } from "../../services/focus-bridge";
+import type { ActiveFocus, FocusLog } from "../../services/focus-bridge";
 import { t, tf, type Locale } from "../../services/i18n";
 import { PlusIcon } from "../icons/Icons";
 import { TaskRow } from "./TaskRow";
@@ -13,6 +13,8 @@ interface GenericListViewProps {
   tasks: Task[];
   /** Subtasks grouped by parent, built once by the caller instead of scanned per row. */
   childrenMap: Map<string, Task[]>;
+  /** Crisp Focus time by task, for the rows. */
+  focusLog?: FocusLog;
   projects: Record<string, Project>;
   project?: Project;
   selectedTaskId: string | null;
@@ -31,6 +33,7 @@ export function GenericListView({
   locale,
   tasks,
   childrenMap,
+  focusLog,
   projects,
   project,
   selectedTaskId,
@@ -145,6 +148,7 @@ export function GenericListView({
               project={task.projectId ? projects[task.projectId] : undefined}
               subtasks={childrenMap.get(task.id) ?? []}
                     childrenMap={childrenMap}
+                    focusLog={focusLog}
                     focusState={activeFocus?.taskId === task.id ? activeFocus.state : null}
               isSelected={selectedTaskId === task.id}
               onSelect={() => onSelectTask(task.id)}

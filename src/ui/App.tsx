@@ -911,6 +911,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               tasks={visibleTasks}
               locale={locale}
               childrenMap={childrenMap}
+              focusLog={storeState.data.focusLog}
               projects={db.projects}
               selectedTaskId={selectedTaskId}
               onSelectTask={(id) => setSelectedTaskId(id)}
@@ -942,6 +943,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               locale={locale}
               tasks={visibleTasks}
               childrenMap={childrenMap}
+              focusLog={storeState.data.focusLog}
               projects={db.projects}
               project={
                 activeNav.startsWith("proj:")

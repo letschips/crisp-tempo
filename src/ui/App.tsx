@@ -4,19 +4,13 @@ import type { Plugin, WorkspaceLeaf } from "obsidian";
 import { Notice } from "obsidian";
 import {
   buildChildrenMap,
-  getAnytimeTasks,
-  getCompletedTasks,
-  getInboxTasks,
   getKpiStats,
   getCycleTimeStatus,
   getDayCapacity,
   getNavCounts,
-  getSomedayTasks,
-  getTodayTasks,
-  getUpcomingTasks,
+  getNavTasks,
   getVisualOrderTasks,
-  getWaitingTasks,
-  sortByStatus,
+  navForReveal,
 } from "../core/selectors";
 import { busyMinutes } from "../core/apple-sync";
 import { buildNewTask, type NewTaskInput } from "../core/new-task";
@@ -81,9 +75,19 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
     };
   }, [store]);
 
-  // Another plugin (Crisp Pulse) asked to show one of its tasks.
+  // Another plugin (Crisp Search, Pulse, Launchpad) asked to show a task. The list moves to one that
+  // has the task (or its top-level parent) unless the list on screen already does.
   useEffect(() => store.onRevealTask((taskId) => {
-    if (store.data?.database.tasks[taskId]) setSelectedTaskId(taskId);
+    const db = store.data?.database;
+    if (!db?.tasks[taskId]) return;
+    const nav = navForReveal(db, taskId, activeNavRef.current, getTodayString());
+    // The list-change effect below clears the selection for every new list it sees, and several of its
+    // runs can still be queued (two reveals in a row, a list picked by hand just before). It keeps this
+    // task only on the run for the list chosen here. No run is coming when that list is already settled.
+    const settled = nav === prevNavRef.current && nav === activeNavRef.current;
+    revealOnNavRef.current = settled ? null : { taskId, nav };
+    setActiveNav(nav);
+    setSelectedTaskId(taskId);
   }), [store]);
 
   // Listen for Quick Add command
@@ -98,6 +102,11 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
   // UI Navigation & View state. Nothing is selected on open: on a narrow pane the inspector
   // covers the whole view, so an automatic selection would hide the task list at launch.
   const [activeNav, setActiveNav] = useState<string>("today");
+  // Read by the revealTask listener, which is installed once.
+  const activeNavRef = useRef(activeNav);
+  activeNavRef.current = activeNav;
+  // A task opened from another plugin, kept selected across the list change made to show it.
+  const revealOnNavRef = useRef<{ taskId: string; nav: string } | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [isTaskCreateOpen, setIsTaskCreateOpen] = useState(false);
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
@@ -133,7 +142,9 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
   useEffect(() => {
     if (prevNavRef.current !== activeNav) {
       prevNavRef.current = activeNav;
-      setSelectedTaskId(null);
+      const reveal = revealOnNavRef.current;
+      if (reveal?.nav === activeNav) revealOnNavRef.current = null;
+      setSelectedTaskId(reveal?.nav === activeNav ? reveal.taskId : null);
       setMoveMessage(null);
       setConfirmSalvage(false);
     }
@@ -209,22 +220,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
     if (!database) return null;
     const allTasks = database.tasks;
     const taskList = Object.values(allTasks);
-    let visibleTasks: Task[] = [];
-
-    if (activeNav === "today") visibleTasks = getTodayTasks(allTasks, today);
-    else if (activeNav === "inbox") visibleTasks = getInboxTasks(allTasks);
-    else if (activeNav === "upcoming") visibleTasks = getUpcomingTasks(allTasks, today);
-    else if (activeNav === "anytime") visibleTasks = getAnytimeTasks(allTasks, today);
-    else if (activeNav === "someday") visibleTasks = getSomedayTasks(allTasks);
-    else if (activeNav === "waiting") visibleTasks = getWaitingTasks(allTasks);
-    else if (activeNav === "completed") visibleTasks = getCompletedTasks(allTasks);
-    else if (activeNav.startsWith("proj:")) {
-      const projectId = activeNav.slice(5);
-      visibleTasks = sortByStatus(taskList.filter((t) => !t.parentTaskId && t.projectId === projectId));
-    } else if (activeNav.startsWith("cycle:")) {
-      const cycleId = activeNav.slice(6);
-      visibleTasks = sortByStatus(taskList.filter((t) => !t.parentTaskId && t.cycleId === cycleId));
-    }
+    const visibleTasks = getNavTasks(allTasks, activeNav, today);
 
     const childrenMap = buildChildrenMap(allTasks);
     return {

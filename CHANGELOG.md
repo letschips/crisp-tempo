@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.18.1] - 2026-11-12
+
+### Changed
+- 从 Crisp Search、Crisp Pulse 或 Crisp Launchpad 打开一条任务时，左侧列表跟着切到包含它的那一个（例如已完成的任务切到「历史完成记录」），任务行在列表里可见并选中；当前列表里本来就有这条任务时不切换。子任务按所属的顶层任务定位。
+
 ## [0.18.0] - 2026-11-11
 
 ### Added

@@ -750,6 +750,31 @@ await scenario('pulse_task_reveal_and_source_link', async () => {
   return { revealed: true, sourceOpened: true };
 });
 
+// 0.18.1: a task opened from Crisp Search / Pulse / Launchpad is also in the list behind the inspector.
+await scenario('reveal_moves_the_list_to_the_task', async () => {
+  const p = await boot();
+  const reveal = (id) => p.evaluate((id) => tempoAudit.store.TempoStore.get(plugin).revealTask(id), id);
+  const activeNav = () => p.locator('.tempo-sidebar-card .tempo-nav-item.is-active').first().innerText();
+  const selectedRow = () => p.locator('.tempo-main-card .tempo-task-row.is-selected .tempo-task-title').allTextContents();
+  assert.ok((await activeNav()).includes('今天'));
+  await reveal('task-4');
+  await p.waitForFunction(() => document.querySelector('.tempo-inspector-title-input')?.value === 'Done Task');
+  assert.ok((await activeNav()).includes('历史完成记录'), 'a done task opened from 今天 moves the list to the completed log');
+  assert.deepEqual(await selectedRow(), ['Done Task'], 'its row is in the list and selected');
+  await reveal('task-3');
+  await p.waitForFunction(() => document.querySelector('.tempo-inspector-title-input')?.value === 'Plain Task');
+  assert.ok((await activeNav()).includes('随时可做'));
+  assert.deepEqual(await selectedRow(), ['Plain Task']);
+  await navTo(p, 'Very long sample project');
+  assert.equal(await p.locator('.tempo-main-card .tempo-task-row.is-selected').count(), 0, 'changing lists by hand still clears the selection');
+  await reveal('task-1');
+  await p.waitForFunction(() => document.querySelector('.tempo-inspector-title-input')?.value === 'Primary Task');
+  assert.ok((await activeNav()).includes('Very long sample project'), 'a task already on screen keeps the list');
+  assert.deepEqual(await selectedRow(), ['Primary Task']);
+  await close(p);
+  return { moved: ['历史完成记录', '随时可做'], kept: 'project' };
+});
+
 await scenario('focus_time_on_a_task', async () => {
   const p = await boot({ paneWidth: 760 });
   await p.evaluate(() => {

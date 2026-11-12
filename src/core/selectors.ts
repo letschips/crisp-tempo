@@ -325,6 +325,55 @@ export function getCompletedTasks(tasks: Record<string, Task> | Task[]): Task[] 
     .sort((a, b) => closedAt(b) - closedAt(a));
 }
 
+/** The tasks listed under a sidebar entry ("today", "proj:<id>", "cycle:<id>", …); top-level only. */
+export function getNavTasks(tasks: Record<string, Task>, nav: string, today = getTodayString()): Task[] {
+  if (nav === "today") return getTodayTasks(tasks, today);
+  if (nav === "inbox") return getInboxTasks(tasks);
+  if (nav === "upcoming") return getUpcomingTasks(tasks, today);
+  if (nav === "anytime") return getAnytimeTasks(tasks, today);
+  if (nav === "someday") return getSomedayTasks(tasks);
+  if (nav === "waiting") return getWaitingTasks(tasks);
+  if (nav === "completed") return getCompletedTasks(tasks);
+  if (nav.startsWith("proj:")) {
+    const projectId = nav.slice(5);
+    return sortByStatus(Object.values(tasks).filter((t) => !t.parentTaskId && t.projectId === projectId));
+  }
+  if (nav.startsWith("cycle:")) {
+    const cycleId = nav.slice(6);
+    return sortByStatus(Object.values(tasks).filter((t) => !t.parentTaskId && t.cycleId === cycleId));
+  }
+  return [];
+}
+
+const REVEAL_NAV_ORDER = ["today", "inbox", "upcoming", "anytime", "someday", "waiting", "completed"];
+
+/**
+ * The sidebar entry to show when another plugin opens a task (revealTask): the current one when it
+ * already lists the task, else the first smart list that does, else its project or cycle. Lists show
+ * top-level tasks only, so a subtask goes where its top-level parent is listed.
+ */
+export function navForReveal(
+  db: Pick<TodoDatabase, "tasks" | "projects" | "cycles">,
+  taskId: string,
+  activeNav: string,
+  today = getTodayString(),
+): string {
+  let task = db.tasks[taskId];
+  const seen = new Set<string>();
+  while (task?.parentTaskId && !seen.has(task.id)) {
+    seen.add(task.id);
+    task = db.tasks[task.parentTaskId];
+  }
+  if (!task || task.parentTaskId) return activeNav;
+  const lists = (nav: string) => getNavTasks(db.tasks, nav, today).some((t) => t.id === task.id);
+  if (lists(activeNav)) return activeNav;
+  const smart = REVEAL_NAV_ORDER.find(lists);
+  if (smart) return smart;
+  if (task.projectId && db.projects[task.projectId]) return `proj:${task.projectId}`;
+  if (task.cycleId && db.cycles[task.cycleId]) return `cycle:${task.cycleId}`;
+  return activeNav;
+}
+
 /**
  * Computes exact unified navigation counts matching lists.
  * Counts mirror the lists one-for-one, including the deliberate Today/Upcoming and

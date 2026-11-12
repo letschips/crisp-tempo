@@ -171,8 +171,11 @@ export function DatePickerPopover({
       const rect = containerRef.current.getBoundingClientRect();
       const doc = containerRef.current.ownerDocument;
       const ownerWindow = doc.defaultView ?? window;
-      const paneRect = containerRef.current.closest(
-        ".tempo-window-body, .tempo-inspector-body, .tempo-view-container, .workspace-leaf-content"
+      // In a dialog the popover may leave the dialog body (see .tempo-window-body:has(...) in styles.css)
+      // and is bounded by the backdrop, which covers the Tempo pane; the dialog body alone is too short.
+      const paneRect = (
+        containerRef.current.closest(".tempo-modal-backdrop") ??
+        containerRef.current.closest(".tempo-window-body, .tempo-inspector-body, .tempo-view-container, .workspace-leaf-content")
       )?.getBoundingClientRect();
       const maxPopupHeight = Math.max(120, (paneRect?.height ?? ownerWindow.innerHeight) - 16);
       const estimatedHeight = Math.min(maxPopupHeight,
@@ -246,7 +249,7 @@ export function DatePickerPopover({
   };
 
   return (
-    <div className="tempo-datepicker-wrapper" ref={containerRef}>
+    <div className={`tempo-datepicker-wrapper ${isOpen ? "is-open" : ""}`} ref={containerRef}>
       {/* Trigger Button */}
       <button
         type="button"

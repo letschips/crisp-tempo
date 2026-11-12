@@ -531,6 +531,35 @@ await scenario('inbox_excludes_completed_items', async () => {
   return { inboxEmptiedOnComplete: true };
 });
 
+// User report 2026-11-12: in the New Task dialog the start-date calendar was cut to the dialog body's
+// height (only the first rows showed) and the due-date field was drawn over its footer.
+await scenario('task_dialog_date_picker_not_clipped', async () => {
+  const p = await boot();
+  await p.locator('.tempo-header-actions').getByRole('button', { name: '新建任务' }).click();
+  const card = p.locator('.tempo-window-card');
+  await card.waitFor();
+  await card.locator('.tempo-start-date-field .tempo-datepicker-trigger').click();
+  const result = await p.evaluate(() => {
+    const pop = document.querySelector('.tempo-window-card .tempo-datepicker-popover');
+    const r = pop.getBoundingClientRect();
+    const hit = (x, y) => { const e = document.elementFromPoint(x, y); return !!e && pop.contains(e); };
+    return {
+      clipped: pop.scrollHeight - pop.clientHeight,
+      lastDayVisible: [...pop.querySelectorAll('button.tempo-datepicker-day')].pop().getBoundingClientRect().bottom <= r.bottom,
+      footerOnTop: hit(r.right - 30, r.bottom - 20) && hit(r.left + 30, r.bottom - 20),
+      inView: r.top >= 0,
+    };
+  });
+  assert.equal(result.clipped, 0, 'the whole month fits');
+  assert.ok(result.lastDayVisible, 'the last day is visible');
+  assert.ok(result.footerOnTop, 'no later date field is drawn over the popover');
+  assert.ok(result.inView);
+  await card.locator('button.tempo-datepicker-day', { hasText: /^20$/ }).click();
+  assert.equal(await p.evaluate(() => getComputedStyle(document.querySelector('.tempo-window-body')).overflowY), 'auto', 'the body scrolls again once closed');
+  await close(p);
+  return result;
+});
+
 await scenario('cycle_defaults_and_required_dates', async () => {
   const p = await boot();
   await p.locator('.tempo-sidebar-add-btn').nth(1).click();
@@ -590,10 +619,12 @@ await scenario('mobile_navigation_and_date_bounds', async () => {
     await p.locator('.tempo-window-card .tempo-window-prop-group:not(.tempo-start-date-field) .tempo-datepicker-trigger').click();
     const popup = await p.locator('.tempo-datepicker-popover').boundingBox();
     assert.ok(popup.x >= 0 && popup.x + popup.width <= width, 'popover outside ' + width + ': ' + JSON.stringify(popup));
-    const dateBody = await p.locator('.tempo-window-body').boundingBox();
+    // The popover may leave the dialog body (0.19.1), but stays on screen and shows the whole month.
+    const backdrop = await p.locator('.tempo-modal-backdrop').boundingBox();
+    const cut = await p.evaluate(() => { const e = document.querySelector('.tempo-datepicker-popover'); return e.scrollHeight - e.clientHeight; });
     assert.ok(
-      popup.y >= dateBody.y - 1 && popup.y + popup.height <= dateBody.y + dateBody.height + 1,
-      'popover clipped ' + width + ': ' + JSON.stringify({ popup, dateBody }),
+      popup.y >= backdrop.y - 1 && popup.y + popup.height <= backdrop.y + backdrop.height + 1 && cut <= 0,
+      'popover clipped ' + width + ': ' + JSON.stringify({ popup, backdrop, cut }),
     );
     await p.screenshot({ path: out + '/date-' + width + '.png' });
     await p.keyboard.press('Escape');

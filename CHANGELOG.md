@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.19.1] - 2026-11-12
+
+### Fixed
+- 新建任务窗口里点「计划开始」，日历只显示前几行、底部被「截止日期」按钮压住。现在整个月完整显示，浮在其他日期框上面。
+
 ## [0.19.0] - 2026-11-12
 
 ### Added

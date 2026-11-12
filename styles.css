@@ -1137,6 +1137,16 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   z-index: 50;
 }
 
+/* The open picker stays above the date fields after it (each field is its own z-index layer). */
+.tempo-datepicker-wrapper.is-open {
+  z-index: 10060;
+}
+
+/* A dialog body scrolls, which would clip the open popover to the body's short height. */
+.tempo-window-body:has(.tempo-datepicker-wrapper.is-open) {
+  overflow: visible !important;
+}
+
 .tempo-datepicker-trigger {
   all: unset;
   box-sizing: border-box;

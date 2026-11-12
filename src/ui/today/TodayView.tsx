@@ -27,6 +27,9 @@ interface TodayViewProps {
   events?: CalendarEvent[];
   /** The last refresh of the events failed; they are from earlier. */
   eventsStale?: boolean;
+  /** Opens the task a Calendar event schedules; false when the event is not a task's. */
+  onOpenEvent?: (eventId: string) => boolean;
+  isTaskEvent?: (eventId: string) => boolean;
 }
 
 /** "已安排 110 / 100 分钟 · 1 项未估时 · 超出 10 分钟"; hidden until something is estimated or budgeted. */
@@ -53,7 +56,14 @@ const clock = (ms: number, locale: Locale) =>
   new Date(ms).toLocaleTimeString(locale === "zh" ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
 
 /** Read-only list of today's events from macOS Calendar; past ones are dimmed. */
-function TodayEvents({ events, stale, locale }: { events: CalendarEvent[]; stale: boolean; locale: Locale }): JSX.Element {
+function TodayEvents({ events, stale, locale, onOpenEvent, isTaskEvent }: {
+  events: CalendarEvent[];
+  stale: boolean;
+  locale: Locale;
+  /** Opens the task an event schedules; returns false for events that are not a task's. */
+  onOpenEvent?: (eventId: string) => boolean;
+  isTaskEvent?: (eventId: string) => boolean;
+}): JSX.Element {
   const now = Date.now();
   return (
     <div className="tempo-today-events" style={{ marginBottom: 14 }}>
@@ -67,7 +77,8 @@ function TodayEvents({ events, stale, locale }: { events: CalendarEvent[]; stale
       {events.map((event) => (
         <div
           key={`${event.id}-${event.start}`}
-          className={`tempo-event-row ${!event.allDay && event.end <= now ? "is-past" : ""} ${event.status === "canceled" ? "is-canceled" : ""}`}
+          onClick={() => onOpenEvent?.(event.id)}
+          className={`tempo-event-row ${isTaskEvent?.(event.id) ? "is-task" : ""} ${!event.allDay && event.end <= now ? "is-past" : ""} ${event.status === "canceled" ? "is-canceled" : ""}`}
         >
           <span className="tempo-event-bar" style={event.color ? { background: event.color } : undefined} />
           <span className="tempo-event-time">
@@ -97,6 +108,8 @@ export function TodayView({
   activeFocus,
   events,
   eventsStale,
+  onOpenEvent,
+  isTaskEvent,
 }: TodayViewProps): JSX.Element {
   const inProgressTasks = tasks.filter((t) => t.status === "in_progress");
   const todoTasks = tasks.filter((t) => t.status === "todo");
@@ -131,7 +144,7 @@ export function TodayView({
 
       {/* Task List */}
       <div className="tempo-task-scroll">
-        {events && events.length > 0 && <TodayEvents events={events} stale={!!eventsStale} locale={locale} />}
+        {events && events.length > 0 && <TodayEvents events={events} stale={!!eventsStale} locale={locale} onOpenEvent={onOpenEvent} isTaskEvent={isTaskEvent} />}
         {tasks.length === 0 ? (
           <div className="tempo-empty-state">
             <TodayIcon size={36} className="tempo-empty-icon" />

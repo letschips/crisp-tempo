@@ -1,6 +1,7 @@
 import type { TodoDatabase } from "./types";
 import { addFocusEntry, type FocusLog } from "../services/focus-bridge";
 import type { AppleSettings, ReminderLink } from "./apple-sync";
+import type { BlockLink } from "./calendar-blocks";
 
 /**
  * Three-way merge of data.json when another device (a sync service) changed it while this device
@@ -112,7 +113,7 @@ export function mergeAppleSettings(
   remote: AppleSettings | undefined,
   conflicts: MergeConflict[],
 ): AppleSettings | undefined {
-  const field = <K extends Exclude<keyof AppleSettings, "links">>(key: K) =>
+  const field = <K extends Exclude<keyof AppleSettings, "links" | "blocks">>(key: K) =>
     mergeSetting(`apple.${key}`, base?.[key], local?.[key], remote?.[key], conflicts);
   const links: Record<string, ReminderLink> = {};
   const localLinks = local?.links ?? {};
@@ -120,6 +121,13 @@ export function mergeAppleSettings(
   for (const id of new Set([...Object.keys(localLinks), ...Object.keys(remoteLinks)])) {
     const { value } = pick(base?.links?.[id], localLinks[id], remoteLinks[id]);
     if (value !== undefined) links[id] = value;
+  }
+  const blocks: Record<string, BlockLink> = {};
+  const localBlocks = local?.blocks ?? {};
+  const remoteBlocks = remote?.blocks ?? {};
+  for (const id of new Set([...Object.keys(localBlocks), ...Object.keys(remoteBlocks)])) {
+    const { value } = pick(base?.blocks?.[id], localBlocks[id], remoteBlocks[id]);
+    if (value !== undefined) blocks[id] = value;
   }
   // Never-import entries are only ever added, so both sides' are kept.
   const ignored = [...new Set([...(local?.ignored ?? []), ...(remote?.ignored ?? [])])];
@@ -132,6 +140,8 @@ export function mergeAppleSettings(
     autoSendSince: field("autoSendSince"),
     calendarEnabled: field("calendarEnabled"),
     hiddenCalendars: field("hiddenCalendars"),
+    blockCalendarId: field("blockCalendarId"),
+    blocks: Object.keys(blocks).length ? blocks : undefined,
     links: Object.keys(links).length ? links : undefined,
   };
   for (const key of Object.keys(out) as (keyof AppleSettings)[]) if (out[key] === undefined) delete out[key];

@@ -14,6 +14,16 @@ import {
   type ReminderFetch,
   type ReminderUpdate,
 } from "../core/apple-sync";
+import {
+  blockTitle,
+  localDay,
+  newBlockLink,
+  planBlockSync,
+  taskOnDay,
+  type BlockEvent,
+  type BlockFetch,
+  type BlockUpdate,
+} from "../core/calendar-blocks";
 import { AppleHelperError, appleHelperSupported, runAppleHelper, startAppleWatch } from "./apple-helper";
 import { getTodayString } from "./date-service";
 import { lt } from "./i18n";
@@ -35,6 +45,14 @@ type Kind = "reminders" | "calendar";
 interface StatusAnswer { reminders: AppleAccess; calendar: AppleAccess }
 interface ListsAnswer { lists: AppleCalendarInfo[]; defaultId: string | null }
 interface CalendarsAnswer { calendars: AppleCalendarInfo[] }
+interface BlockCalendarAnswer { calendar: AppleCalendarInfo; created: boolean }
+interface ApplyEventsAnswer {
+  updates: { ok: boolean; code?: string; message?: string; event?: BlockEvent }[];
+  deletes: { ok: boolean; code?: string; message?: string }[];
+  creates: { key: string; ok: boolean; code?: string; message?: string; event?: BlockEvent }[];
+}
+/** Name of the calendar made for time blocks when none is chosen. */
+const BLOCK_CALENDAR_TITLE = "Tempo";
 interface ApplyAnswer {
   updates: { ok: boolean; code?: string; message?: string }[];
   creates: { key: string; ok: boolean; code?: string; message?: string; reminder?: AppleReminder }[];
@@ -82,6 +100,8 @@ export class AppleSyncController {
       syncNow: () => this.syncNow(true),
       sendTask: (taskId) => this.sendTask(taskId),
       unlinkTask: (taskId) => this.unlinkTask(taskId),
+      scheduleTask: (taskId, start, end) => this.scheduleTask(taskId, start, end),
+      unscheduleTask: (taskId) => this.unscheduleTask(taskId),
     };
     this.plugin.register(() => {
       if (this.changeTimer !== null) window.clearTimeout(this.changeTimer);
@@ -142,7 +162,10 @@ export class AppleSyncController {
       await this.syncReminders(manual);
       await this.sendNewTasks();
     }
-    if (settings.calendarEnabled && status.calendar === "fullAccess") await this.loadTodayEvents();
+    if (settings.calendarEnabled && status.calendar === "fullAccess") {
+      await this.syncBlocks();
+      await this.loadTodayEvents();
+    }
     else if (store.appleRuntime.events) store.setAppleRuntime({ events: undefined, eventsDate: undefined });
     this.updateWatch(
       (!!store.data?.apple?.remindersEnabled && status.reminders === "fullAccess") ||
@@ -212,6 +235,133 @@ export class AppleSyncController {
       if (needsAccess(err)) store.setAppleRuntime({ calendar: "denied", events: undefined, eventsError: undefined });
       else store.setAppleRuntime({ eventsError: describe(err) });
     }
+  }
+
+  /** Keeps scheduled tasks and their Calendar events in step (see core/calendar-blocks.ts). */
+  private async syncBlocks(): Promise<void> {
+    const store = this.store;
+    const blocks = store.data?.apple?.blocks ?? {};
+    if (!Object.keys(blocks).length) return;
+    try {
+      const fetched = await runAppleHelper<BlockFetch>(this.plugin, "event-items", {
+        items: Object.values(blocks).map((b) => ({ id: b.id, externalId: b.externalId ?? null, calendarId: b.calendarId ?? null })),
+      });
+      if (!store.data?.apple?.calendarEnabled) return;
+      let updates: BlockUpdate[] = [];
+      let deletes: { taskId: string; id: string; externalId?: string; calendarId?: string }[] = [];
+      this.apply((db, apple) => {
+        const plan = planBlockSync({ db, blocks: apple.blocks ?? {}, fetched, now: Date.now(), today: getTodayString() });
+        updates = plan.updates;
+        deletes = plan.deletes;
+        if (plan.db === db && JSON.stringify(plan.blocks) === JSON.stringify(apple.blocks ?? {})) return null;
+        return { db: plan.db, apple: { ...apple, blocks: plan.blocks } };
+      });
+      if (!updates.length && !deletes.length) return;
+      const answer = await runAppleHelper<ApplyEventsAnswer>(this.plugin, "apply-events", {
+        updates: updates.map(({ taskId: _taskId, ...update }) => update),
+        deletes: deletes.map(({ taskId: _taskId, ...item }) => item),
+      });
+      this.apply((db, apple) => {
+        const next = { ...(apple.blocks ?? {}) };
+        updates.forEach((update, index) => {
+          const result = answer.updates[index];
+          const link = next[update.taskId];
+          if (!result || !link || link.id !== update.id) return;
+          if (result.ok) next[update.taskId] = { ...link, title: update.title };
+          else if (result.code === "missing") delete next[update.taskId];
+          // "changed": edited in Calendar meanwhile; the next sync merges both edits.
+        });
+        return { db, apple: { ...apple, blocks: next } };
+      });
+      const failed = [...answer.updates, ...answer.deletes].find((r) => !r.ok && r.code !== "missing" && r.code !== "changed");
+      if (failed) console.warn("Crisp Tempo: could not write a time block to Calendar", failed);
+    } catch (err) {
+      console.warn("Crisp Tempo: time block sync failed", err);
+      if (needsAccess(err)) store.setAppleRuntime({ calendar: "denied" });
+    }
+  }
+
+  /**
+   * "Schedule in Calendar": adds the task to the block calendar from start to end, or moves its
+   * event there. The task moves to that day (see taskOnDay) and, without an estimate, takes the
+   * block's length as one.
+   */
+  private async scheduleTask(taskId: string, start: number, end: number): Promise<boolean> {
+    const store = this.store;
+    if (store.data?.licenseStatus !== "valid") return false;
+    if (!(end > start)) return false;
+    return this.exclusive(async () => {
+      const task = store.data?.database.tasks[taskId];
+      const settings = store.data?.apple ?? {};
+      if (!task || !settings.calendarEnabled) return false;
+      const title = blockTitle(task.title);
+      const existing = settings.blocks?.[taskId];
+      let event: BlockEvent | undefined;
+      if (existing) {
+        const answer = await runAppleHelper<ApplyEventsAnswer>(this.plugin, "apply-events", {
+          updates: [{ id: existing.id, externalId: existing.externalId ?? null, calendarId: existing.calendarId ?? null, title, start, end }],
+        });
+        const result = answer.updates[0];
+        if (result?.ok) event = result.event;
+        else if (result?.code !== "missing") throw new AppleHelperError(result?.code ?? "helper_error", result?.message ?? "?");
+      }
+      if (!event) {
+        const calendar = await runAppleHelper<BlockCalendarAnswer>(this.plugin, "block-calendar", {
+          calendarId: settings.blockCalendarId ?? null,
+          title: BLOCK_CALENDAR_TITLE,
+        });
+        const answer = await runAppleHelper<ApplyEventsAnswer>(this.plugin, "apply-events", {
+          creates: [{ key: taskId, calendarId: calendar.calendar.id, title, start, end }],
+        });
+        const created = answer.creates[0];
+        if (!created?.ok || !created.event) throw new AppleHelperError(created?.code ?? "helper_error", created?.message ?? "?");
+        event = created.event;
+        if (calendar.created) this.namesStale = true;
+      }
+      const made = event;
+      this.apply((db, apple) => {
+        const current = db.tasks[taskId];
+        let tasks = db.tasks;
+        if (current) {
+          const now = Date.now();
+          let next = taskOnDay(current, localDay(start), getTodayString(), now) ?? current;
+          if (!next.estimateMinutes) next = { ...next, estimateMinutes: Math.round((end - start) / 60_000), updatedAt: now };
+          if (next !== current) tasks = { ...tasks, [taskId]: next };
+        }
+        return {
+          db: tasks === db.tasks ? db : { ...db, tasks },
+          apple: { ...apple, blocks: { ...(apple.blocks ?? {}), [taskId]: newBlockLink({ ...made, title }) } },
+        };
+      });
+      return true;
+    }).then((ok) => {
+      if (ok) void this.syncNow();
+      return ok;
+    }, (err) => {
+      new Notice(lt(`没能排进日历：${describe(err)}`, `Could not schedule in Calendar: ${describe(err)}`));
+      return false;
+    });
+  }
+
+  /** Takes the task out of Calendar: its event is deleted and the task stays where it is. */
+  private async unscheduleTask(taskId: string): Promise<void> {
+    const store = this.store;
+    await this.exclusive(async () => {
+      const link = store.data?.apple?.blocks?.[taskId];
+      if (!link) return;
+      const answer = await runAppleHelper<ApplyEventsAnswer>(this.plugin, "apply-events", {
+        deletes: [{ id: link.id, externalId: link.externalId ?? null, calendarId: link.calendarId ?? null }],
+      });
+      const result = answer.deletes[0];
+      if (result && !result.ok) throw new AppleHelperError(result.code ?? "helper_error", result.message ?? "?");
+      this.apply((db, apple) => {
+        if (!apple.blocks?.[taskId]) return null;
+        const { [taskId]: _gone, ...blocks } = apple.blocks;
+        return { db, apple: { ...apple, blocks } };
+      });
+    }).then(() => void this.syncNow(), (err) => {
+      new Notice(lt(`没能从日历移除：${describe(err)}`, `Could not remove from Calendar: ${describe(err)}`));
+    });
   }
 
   private async syncReminders(manual: boolean): Promise<void> {
@@ -460,23 +610,29 @@ export class AppleSyncController {
 
   private rememberLinkedTasks(): void {
     const data = this.store.data;
-    this.linkedSeen = new Map(Object.keys(data?.apple?.links ?? {}).map((id) => [id, data?.database.tasks[id]]));
+    const ids = [...Object.keys(data?.apple?.links ?? {}), ...Object.keys(data?.apple?.blocks ?? {})];
+    this.linkedSeen = new Map(ids.map((id) => [id, data?.database.tasks[id]]));
   }
 
   /** Writes Tempo edits to linked tasks to Reminders shortly after they are made. */
   private watchLinkedTasks(): void {
     const data = this.store.data;
-    if (this.applying || !data?.apple?.remindersEnabled) return;
-    const links = data.apple.links ?? {};
+    const reminders = !!data?.apple?.remindersEnabled;
+    const calendar = !!data?.apple?.calendarEnabled;
+    if (this.applying || !data?.apple || (!reminders && !calendar)) return;
+    const ids = [
+      ...(reminders ? Object.keys(data.apple.links ?? {}) : []),
+      ...(calendar ? Object.keys(data.apple.blocks ?? {}) : []),
+    ];
     let changed = false;
-    for (const id of Object.keys(links)) {
+    for (const id of ids) {
       if (this.linkedSeen.get(id) !== data.database.tasks[id]) {
         changed = true;
         break;
       }
     }
     // A new task to add by itself; the same waiting set (say, after a failed add) does not retrigger.
-    const waiting = autoSendCandidates(data.database, data.apple).map((task) => task.id).join();
+    const waiting = reminders ? autoSendCandidates(data.database, data.apple).map((task) => task.id).join() : "";
     if (waiting !== this.autoSendSeen) {
       this.autoSendSeen = waiting;
       if (waiting) changed = true;

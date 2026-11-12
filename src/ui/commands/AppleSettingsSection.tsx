@@ -206,6 +206,29 @@ export function AppleSettingsSection({ locale, runtime, settings, actions, licen
               void actions.syncNow();
             }}
           />
+
+          <div className="tempo-settings-item" style={{ marginTop: 10 }}>
+            <div className="tempo-settings-label-group">
+              <span className="tempo-settings-item-title">{t("blockCalendar", locale)}</span>
+              <span className="tempo-settings-item-desc">{t("blockCalendarDesc", locale)}</span>
+            </div>
+            <select
+              className="dropdown tempo-apple-select"
+              value={settings.blockCalendarId ?? ""}
+              onChange={(e) => {
+                const value = (e.target as HTMLSelectElement).value;
+                onUpdateSettings((prev) => ({ ...prev, blockCalendarId: value || undefined }));
+              }}
+            >
+              <option value="">{t("blockCalendarAuto", locale)}</option>
+              {runtime.calendars
+                .filter((calendar) => calendar.writable !== false && calendar.title !== "Tempo")
+                .map((calendar) => (
+                  <option key={calendar.id} value={calendar.id}>{calendar.source ? `${calendar.title} · ${calendar.source}` : calendar.title}</option>
+                ))}
+            </select>
+          </div>
+          {!licensed && <div className="tempo-settings-item-desc">{t("blockNeedLicense", locale)}</div>}
         </div>
       )}
     </div>

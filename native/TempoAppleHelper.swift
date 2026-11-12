@@ -24,6 +24,16 @@
 //                               an update whose "expect" values no longer match the reminder is refused
 //                               with code "changed" (edited elsewhere since it was read)
 //   events                      {"from":ms,"to":ms,"calendars":[id]|null}: events overlapping the range
+//   block-calendar              {"calendarId"?,"title"}: the writable calendar Tempo puts time blocks in: the
+//                               given one if it still exists and is writable, else one with the title, else a
+//                               new calendar with the title (in iCloud when there is an iCloud account)
+//   event-items                 {"items":[{"id","externalId"?,"calendarId"?}]}: those events in any calendar;
+//                               ids not found are in "missing"
+//   apply-events                {"updates":[{"id","externalId"?,"calendarId"?,"title"?,"start"?,"end"?,"expect"?}],
+//                                "creates":[{"key","calendarId","title","start","end"}],
+//                                "deletes":[{"id","externalId"?,"calendarId"?}]}
+//                               an update whose "expect" values ({"title","start","end"}) no longer match is
+//                               refused with code "changed"; a missing event gives code "missing"
 
 import EventKit
 import Foundation
@@ -391,6 +401,164 @@ func runEvents(_ request: [String: Any]) throws -> [String: Any] {
   return ["events": events]
 }
 
+func blockEventObject(_ e: EKEvent) -> [String: Any] {
+  [
+    "id": e.calendarItemIdentifier,
+    "externalId": e.calendarItemExternalIdentifier ?? NSNull(),
+    "calendarId": e.calendar?.calendarIdentifier ?? NSNull(),
+    "title": e.title ?? "",
+    "start": millis(e.startDate),
+    "end": millis(e.endDate),
+    "allDay": e.isAllDay,
+    "modifiedAt": millis(e.lastModifiedDate),
+  ]
+}
+
+func findEvent(id: String?, externalId: String?, calendarId: String?) -> EKEvent? {
+  if let id, !id.isEmpty, let found = store.calendarItem(withIdentifier: id) as? EKEvent { return found }
+  if let externalId, !externalId.isEmpty {
+    let matches = store.calendarItems(withExternalIdentifier: externalId).compactMap { $0 as? EKEvent }
+    return matches.first(where: { calendarId != nil && $0.calendar?.calendarIdentifier == calendarId }) ?? matches.first
+  }
+  return nil
+}
+
+func writableEventCalendar(_ id: String) -> EKCalendar? {
+  store.calendars(for: .event).first { $0.calendarIdentifier == id && $0.allowsContentModifications }
+}
+
+func runBlockCalendar(_ request: [String: Any]) throws -> [String: Any] {
+  try requireAccess(.event)
+  if let id = request["calendarId"] as? String, let found = writableEventCalendar(id) {
+    return ["calendar": calendarObject(found), "created": false]
+  }
+  let title = (request["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Tempo"
+  if let found = store.calendars(for: .event).first(where: { $0.title == title && $0.allowsContentModifications }) {
+    return ["calendar": calendarObject(found), "created": false]
+  }
+  // New calendar: next to the default calendar when that is in iCloud, else in any iCloud account, else on this Mac.
+  let isICloud: (EKSource) -> Bool = { $0.sourceType == .calDAV && $0.title == "iCloud" }
+  let fallback: EKSource? = store.defaultCalendarForNewEvents?.source
+  var source: EKSource? = nil
+  if let fallback, isICloud(fallback) { source = fallback }
+  if source == nil { source = store.sources.first(where: isICloud) }
+  if source == nil { source = store.sources.first(where: { $0.sourceType == .local }) }
+  if source == nil { source = fallback }
+  guard let source else { throw HelperError(code: "no_calendar", message: "No calendar account to add a calendar to.") }
+  let calendar = EKCalendar(for: .event, eventStore: store)
+  calendar.title = title
+  calendar.source = source
+  try store.saveCalendar(calendar, commit: true)
+  return ["calendar": calendarObject(calendar), "created": true]
+}
+
+func runEventItems(_ request: [String: Any]) throws -> [String: Any] {
+  try requireAccess(.event)
+  var items: [[String: Any]] = []
+  var missing: [String] = []
+  for item in (request["items"] as? [[String: Any]]) ?? [] {
+    let id = item["id"] as? String
+    if let event = findEvent(id: id, externalId: item["externalId"] as? String, calendarId: item["calendarId"] as? String) {
+      var object = blockEventObject(event)
+      object["requestedId"] = id ?? NSNull()
+      items.append(object)
+    } else if let id {
+      missing.append(id)
+    }
+  }
+  return ["items": items, "missing": missing]
+}
+
+func runApplyEvents(_ request: [String: Any]) throws -> [String: Any] {
+  try requireAccess(.event)
+  let date = { (value: Any?) -> Date? in
+    (value as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
+  }
+  var updates: [[String: Any]] = []
+  for update in (request["updates"] as? [[String: Any]]) ?? [] {
+    let id = update["id"] as? String
+    guard let event = findEvent(id: id, externalId: update["externalId"] as? String, calendarId: update["calendarId"] as? String) else {
+      updates.append(["id": id ?? NSNull(), "ok": false, "code": "missing", "message": "The event no longer exists."])
+      continue
+    }
+    if let expect = update["expect"] as? [String: Any] {
+      let now = blockEventObject(event)
+      let changed = expect.keys.filter { key in
+        switch (expect[key], now[key]) {
+        case let (x as String, y as String): return x != y
+        case let (x as NSNumber, y as NSNumber): return x.int64Value != y.int64Value
+        default: return true
+        }
+      }
+      if !changed.isEmpty {
+        updates.append(["id": id ?? NSNull(), "ok": false, "code": "changed",
+                        "message": "Changed in Calendar since it was read: \(changed.sorted().joined(separator: ", "))."])
+        continue
+      }
+    }
+    do {
+      if let title = update["title"] as? String { event.title = title }
+      if let start = date(update["start"]), let end = date(update["end"]), end > start {
+        event.isAllDay = false
+        event.startDate = start
+        event.endDate = end
+      }
+      try store.save(event, span: .thisEvent, commit: false)
+      updates.append(["id": id ?? NSNull(), "ok": true, "event": blockEventObject(event)])
+    } catch {
+      updates.append(["id": id ?? NSNull(), "ok": false, "code": "eventkit_error", "message": error.localizedDescription])
+    }
+  }
+  var deletes: [[String: Any]] = []
+  for item in (request["deletes"] as? [[String: Any]]) ?? [] {
+    let id = item["id"] as? String
+    guard let event = findEvent(id: id, externalId: item["externalId"] as? String, calendarId: item["calendarId"] as? String) else {
+      deletes.append(["id": id ?? NSNull(), "ok": true])
+      continue
+    }
+    do {
+      try store.remove(event, span: .thisEvent, commit: false)
+      deletes.append(["id": id ?? NSNull(), "ok": true])
+    } catch {
+      deletes.append(["id": id ?? NSNull(), "ok": false, "code": "eventkit_error", "message": error.localizedDescription])
+    }
+  }
+  var created: [(String, EKEvent)] = []
+  var createResults: [[String: Any]] = []
+  for create in (request["creates"] as? [[String: Any]]) ?? [] {
+    let key = create["key"] as? String ?? ""
+    guard let calendarId = create["calendarId"] as? String, let calendar = writableEventCalendar(calendarId) else {
+      createResults.append(["key": key, "ok": false, "code": "no_calendar", "message": "The calendar no longer exists or is read-only."])
+      continue
+    }
+    guard let start = date(create["start"]), let end = date(create["end"]), end > start else {
+      createResults.append(["key": key, "ok": false, "code": "bad_request", "message": "A block needs numeric start < end (ms)."])
+      continue
+    }
+    let event = EKEvent(eventStore: store)
+    event.calendar = calendar
+    event.title = create["title"] as? String ?? ""
+    event.startDate = start
+    event.endDate = end
+    do {
+      try store.save(event, span: .thisEvent, commit: false)
+      created.append((key, event))
+    } catch {
+      createResults.append(["key": key, "ok": false, "code": "eventkit_error", "message": error.localizedDescription])
+    }
+  }
+  do {
+    try store.commit()
+  } catch {
+    store.reset()
+    throw HelperError(code: "eventkit_error", message: error.localizedDescription)
+  }
+  for (key, event) in created {
+    createResults.append(["key": key, "ok": true, "event": blockEventObject(event)])
+  }
+  return ["updates": updates, "deletes": deletes, "creates": createResults]
+}
+
 func handle(_ command: String, _ request: [String: Any]) throws -> [String: Any] {
   switch command {
   case "status":
@@ -414,8 +582,14 @@ func handle(_ command: String, _ request: [String: Any]) throws -> [String: Any]
     return try runApplyReminders(request)
   case "events":
     return try runEvents(request)
+  case "block-calendar":
+    return try runBlockCalendar(request)
+  case "event-items":
+    return try runEventItems(request)
+  case "apply-events":
+    return try runApplyEvents(request)
   case "version":
-    return ["version": 2]
+    return ["version": 3]
   default:
     throw HelperError(code: "bad_request", message: "Unknown command: \(command)")
   }
@@ -473,7 +647,7 @@ guard let command = args.first else {
 }
 if command == "serve" { serve() }
 do {
-  let needsRequest = ["request-access", "reminders", "apply-reminders", "events"].contains(command)
+  let needsRequest = ["request-access", "reminders", "apply-reminders", "events", "block-calendar", "event-items", "apply-events"].contains(command)
   emit(try handle(command, needsRequest ? try readRequest() : [:]))
 } catch {
   emit(errorObject(error))

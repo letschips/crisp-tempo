@@ -1,4 +1,5 @@
 import type { Task, TodoDatabase } from "./types";
+import { cleanBlockLink, type BlockLink } from "./calendar-blocks";
 
 /**
  * Sync between Tempo tasks and macOS Reminders, plus the stored settings for Reminders and Calendar.
@@ -49,6 +50,10 @@ export interface AppleSettings {
   calendarEnabled?: boolean;
   /** Calendars left out of Today; every other calendar is shown. */
   hiddenCalendars?: string[];
+  /** Calendar that "Schedule in Calendar" puts tasks in; unset: a calendar named "Tempo", made when first needed. */
+  blockCalendarId?: string;
+  /** Tasks scheduled as Calendar events, by Tempo task id (see calendar-blocks.ts). */
+  blocks?: Record<string, BlockLink>;
   /** Linked reminders by Tempo task id. A link outlives its task so the reminder is not imported again. */
   links?: Record<string, ReminderLink>;
   /**
@@ -492,6 +497,13 @@ export function cleanAppleSettings(raw: unknown): AppleSettings | undefined {
       if (link) links[taskId] = link;
     }
   }
+  const blocks: Record<string, BlockLink> = {};
+  if (isRecord(raw.blocks)) {
+    for (const [taskId, value] of Object.entries(raw.blocks)) {
+      const block = cleanBlockLink(value);
+      if (block) blocks[taskId] = block;
+    }
+  }
   const out: AppleSettings = {
     ...(raw.remindersEnabled === true ? { remindersEnabled: true } : {}),
     // An empty list is a choice ("import nothing") and is kept; only a missing one means "never chosen".
@@ -501,6 +513,8 @@ export function cleanAppleSettings(raw: unknown): AppleSettings | undefined {
     ...(typeof raw.autoSendSince === "number" && raw.autoSendSince > 0 ? { autoSendSince: raw.autoSendSince } : {}),
     ...(raw.calendarEnabled === true ? { calendarEnabled: true } : {}),
     ...(ids(raw.hiddenCalendars)?.length ? { hiddenCalendars: ids(raw.hiddenCalendars) } : {}),
+    ...(typeof raw.blockCalendarId === "string" && raw.blockCalendarId ? { blockCalendarId: raw.blockCalendarId } : {}),
+    ...(Object.keys(blocks).length ? { blocks } : {}),
     ...(Object.keys(links).length ? { links } : {}),
     ...(ids(raw.ignored)?.length ? { ignored: ids(raw.ignored)!.slice(-MAX_IGNORED) } : {}),
   };

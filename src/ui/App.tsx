@@ -210,12 +210,19 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
   const dailyCapacity = storeState.data?.dailyCapacityMinutes;
   // Today's Calendar events, once loaded for today (they are dropped when Calendar is turned off).
   const todayEvents = storeState.apple.eventsDate === today ? storeState.apple.events : undefined;
+  // Events that schedule a Tempo task, by event id. Their time is already the task's estimate,
+  // so they are not counted again as busy time.
+  const blocks = storeState.data?.apple?.blocks;
+  const blockTaskByEvent = useMemo(
+    () => new Map(Object.entries(blocks ?? {}).map(([taskId, block]) => [block.id, taskId])),
+    [blocks],
+  );
   const eventMinutes = useMemo(() => {
     if (!todayEvents) return 0;
     const start = new Date(`${today}T00:00:00`);
     const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1);
-    return busyMinutes(todayEvents, start.getTime(), end.getTime());
-  }, [todayEvents, today]);
+    return busyMinutes(todayEvents.filter((event) => !blockTaskByEvent.has(event.id)), start.getTime(), end.getTime());
+  }, [todayEvents, today, blockTaskByEvent]);
   const derived = useMemo(() => {
     if (!database) return null;
     const allTasks = database.tasks;
@@ -917,6 +924,13 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               activeFocus={storeState.activeFocus}
               events={todayEvents}
               eventsStale={!!storeState.apple.eventsError}
+              isTaskEvent={(eventId) => blockTaskByEvent.has(eventId)}
+              onOpenEvent={(eventId) => {
+                const taskId = blockTaskByEvent.get(eventId);
+                if (!taskId || !allTasks[taskId]) return false;
+                setSelectedTaskId(taskId);
+                return true;
+              }}
             />
           ) : (
             <GenericListView
@@ -992,6 +1006,16 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
                       })(),
                       onAdd: () => void store.appleActions?.sendTask(selectedTask.id),
                       onUnlink: () => store.appleActions?.unlinkTask(selectedTask.id),
+                    }
+                  : undefined
+              }
+              calendarBlock={
+                store.appleActions && storeState.data.apple?.calendarEnabled && storeState.apple.calendar === "fullAccess"
+                  ? {
+                      link: storeState.data.apple.blocks?.[selectedTask.id],
+                      licensed: storeState.data.licenseStatus === "valid",
+                      onSchedule: (start, end) => store.appleActions?.scheduleTask(selectedTask.id, start, end) ?? Promise.resolve(false),
+                      onUnschedule: () => void store.appleActions?.unscheduleTask(selectedTask.id),
                     }
                   : undefined
               }

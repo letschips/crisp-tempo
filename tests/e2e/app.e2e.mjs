@@ -1825,6 +1825,95 @@ await scenario('r12_apple_reminders_calendar', async () => {
    - saving does not reach disk or creates a different task shape from the in-view dialog;
    - Escape or the close button leaves the host behind, or still creates a task;
    - opening twice stacks two dialogs. */
+// Scheduling a task in macOS Calendar (time blocks): the Inspector form, the scheduled state, the event in
+// Today opening its task and not counted twice against the day, and the activation gate.
+await scenario('r12_calendar_blocks', async () => {
+  const p = await boot();
+  await addTasks(p, [{ id: 'bk-1', title: 'Deep work', estimateMinutes: 60 }]);
+  await p.evaluate(() => {
+    const s = tempoAudit.store.TempoStore.get(plugin);
+    window.__blockCalls = [];
+    s.setDailyCapacity(240);
+    const t = new Date();
+    const day = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    s.appleActions = {
+      setEnabled: async () => {}, openPrivacySettings() {}, syncNow: async () => {}, sendTask: async () => {}, unlinkTask() {},
+      scheduleTask: async (taskId, start, end) => {
+        __blockCalls.push(['schedule', taskId, start, end]);
+        s.applyAppleSync((db, apple) => ({
+          db: { ...db, tasks: { ...db.tasks, [taskId]: { ...db.tasks[taskId], focusDate: day, triage: 'processed' } } },
+          apple: { ...apple, blocks: { ...(apple.blocks ?? {}), [taskId]: { id: 'EV-' + taskId, calendarId: 'CT', title: db.tasks[taskId].title, start, end } } },
+        }));
+        s.setAppleRuntime({ events: [
+          { id: 'EV-' + taskId, title: 'Deep work', start, end, allDay: false, calendarId: 'CT', color: '#ff2d55' },
+          { id: 'm1', title: 'Meeting', start: start + 2 * 3600e3, end: start + 3 * 3600e3, allDay: false, calendarId: 'C1' },
+        ], eventsDate: day });
+        return true;
+      },
+      unscheduleTask: async (taskId) => {
+        __blockCalls.push(['unschedule', taskId]);
+        s.updateAppleSettings((prev) => { const blocks = { ...prev.blocks }; delete blocks[taskId]; return { ...prev, blocks }; });
+      },
+    };
+    s.setAppleRuntime({ available: true, calendar: 'fullAccess', calendars: [{ id: 'C1', title: '日程', writable: true }, { id: 'C2', title: '节假日', writable: false }] });
+    s.updateAppleSettings((prev) => ({ ...prev, calendarEnabled: true }));
+  });
+
+  // Settings: only writable calendars can be chosen; the default is the Tempo calendar.
+  await p.locator('.tempo-header-actions').getByRole('button', { name: '设置' }).click();
+  const options = await p.locator('.tempo-apple-section select.tempo-apple-select option').allInnerTexts();
+  assert.deepEqual(options.map((o) => o.trim()), ['Tempo（第一次排时自动创建）', '日程']);
+  await settingsDone(p);
+
+  await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).revealTask('bk-1'));
+  const card = p.locator('.tempo-inspector-card');
+  await card.locator('.tempo-block-add').click();
+  assert.equal(await card.locator('.tempo-block-minutes').inputValue(), '60', 'the length starts from the estimate');
+  await card.locator('input[type=time]').fill('20:00');
+  await card.locator('.tempo-block-minutes').fill('90');
+  await card.getByRole('button', { name: '确定' }).click();
+  await p.waitForFunction(() => fixture.disk.apple?.blocks?.['bk-1']?.id === 'EV-bk-1');
+  const [, , start, end] = await p.evaluate(() => __blockCalls[0]);
+  assert.equal(new Date(start).getHours(), 20);
+  assert.equal(end - start, 90 * 60e3);
+  assert.match((await card.locator('.tempo-block-when').innerText()).trim(), /20:00–21:30$/);
+  assert.equal(await card.locator('.tempo-reminder-add').count(), 0, 'no Reminders row while Reminders is off');
+
+  // Today: the block event is the task's (clickable) and only the meeting counts as busy time.
+  await p.locator('.tempo-event-row.is-task').waitFor();
+  assert.equal(await p.locator('.tempo-event-row.is-task').count(), 1);
+  const line = (await p.locator('.tempo-capacity-line').innerText()).trim();
+  assert.ok(line.includes('已安排 60 / 240 分钟') && line.includes('日程 60 分钟'), line);
+  await card.getByRole('button', { name: '关闭' }).click();
+  await card.waitFor({ state: 'detached' });
+  await p.locator('.tempo-event-row.is-task').click();
+  await p.waitForFunction(() => document.querySelector('.tempo-inspector-card .tempo-inspector-title-input')?.value === 'Deep work');
+
+  await card.getByRole('button', { name: '移出日历' }).click();
+  await p.waitForFunction(() => !fixture.disk.apple?.blocks?.['bk-1']);
+  assert.equal(await card.locator('.tempo-block-add').count(), 1);
+  await close(p);
+
+  // Not activated: the button asks for activation and schedules nothing.
+  const u = await boot({ licensed: false });
+  await addTasks(u, [{ id: 'bk-2', title: 'Unlicensed block' }]);
+  await u.evaluate(() => {
+    const s = tempoAudit.store.TempoStore.get(plugin);
+    window.__blockCalls = [];
+    s.appleActions = { setEnabled: async () => {}, openPrivacySettings() {}, syncNow: async () => {}, sendTask: async () => {}, unlinkTask() {},
+      scheduleTask: async () => { __blockCalls.push('schedule'); return true; }, unscheduleTask: async () => {} };
+    s.setAppleRuntime({ available: true, calendar: 'fullAccess', calendars: [] });
+    s.updateAppleSettings((prev) => ({ ...prev, calendarEnabled: true }));
+  });
+  assert.ok(await u.evaluate(() => !!tempoAudit.store.TempoStore.get(plugin).data.database.tasks['bk-2']));
+  await u.evaluate(() => tempoAudit.store.TempoStore.get(plugin).revealTask('bk-2'));
+  await u.locator('.tempo-inspector-card .tempo-block-add').click();
+  await u.locator('.tempo-license-input').waitFor();
+  assert.equal(await u.locator('.tempo-block-form').count(), 0);
+  assert.deepEqual(await u.evaluate(() => __blockCalls), []);
+  await close(u);
+});
+
 await scenario('r13_floating_quick_add', async () => {
   const p = await boot();
   const host = p.locator('body > .tempo-floating-host');

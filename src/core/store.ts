@@ -36,6 +36,8 @@ export interface AppleCalendarInfo {
   title: string;
   color?: string;
   source?: string;
+  /** Events can be added to it (calendars only). */
+  writable?: boolean;
 }
 
 /** What the Reminders and Calendar bridge knows right now. Runtime only, never saved. */
@@ -66,6 +68,10 @@ export interface AppleActions {
   syncNow(): Promise<void>;
   sendTask(taskId: string): Promise<void>;
   unlinkTask(taskId: string): void;
+  /** Puts the task in Calendar from `start` to `end` (epoch ms), or moves its event there. */
+  scheduleTask(taskId: string, start: number, end: number): Promise<boolean>;
+  /** Deletes the task's event from Calendar. */
+  unscheduleTask(taskId: string): Promise<void>;
 }
 
 export type StoreLoadStatus = "loading" | "ready" | "error";

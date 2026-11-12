@@ -1,5 +1,6 @@
 import type { JSX } from "preact";
 import type { ReminderLink } from "../../core/apple-sync";
+import { localDay, type BlockLink } from "../../core/calendar-blocks";
 import { useLayoutEffect, useState } from "preact/hooks";
 import { getTaskEffort } from "../../core/selectors";
 import { isWholeMinutes } from "../../core/store";
@@ -38,6 +39,13 @@ interface InspectorProps {
     onAdd: () => void;
     onUnlink: () => void;
   };
+  /** Scheduling the task in macOS Calendar: shown while Calendar is on, on desktop macOS. */
+  calendarBlock?: {
+    link?: BlockLink;
+    licensed: boolean;
+    onSchedule: (start: number, end: number) => Promise<boolean>;
+    onUnschedule: () => void;
+  };
   /** Opens the task's outcome note or URL. */
   onOpenOutcome?: (link: string) => void;
   /** Crisp Focus time on this task. Hidden when Focus is not installed and nothing was recorded. */
@@ -48,6 +56,112 @@ interface InspectorProps {
     onStart: (mode: "pomodoro" | "single") => void;
     onOpenTimer: () => void;
   };
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const clockOf = (ms: number) => {
+  const d = new Date(ms);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+
+/** "Schedule in Calendar": a day, a start time and a length; once scheduled, the block with change/remove. */
+function CalendarBlockRow({ task, block, minutes, locale, onRequestLicense }: {
+  task: Task;
+  block: NonNullable<InspectorProps["calendarBlock"]>;
+  minutes: number;
+  locale: Locale;
+  onRequestLicense?: () => void;
+}): JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const [day, setDay] = useState("");
+  const [time, setTime] = useState("");
+  const [length, setLength] = useState("");
+  const [busy, setBusy] = useState(false);
+  const link = block.link;
+  useLayoutEffect(() => setEditing(false), [task.id]);
+
+  const open = () => {
+    if (!block.licensed) {
+      onRequestLicense?.();
+      return;
+    }
+    const today = getTodayString();
+    if (link) {
+      setDay(localDay(link.start));
+      setTime(clockOf(link.start));
+      setLength(String(Math.round((link.end - link.start) / 60_000)));
+    } else {
+      const planned = [task.focusDate, task.startDate].find((d) => d && d >= today);
+      const d = planned ?? today;
+      setDay(d);
+      if (d === today) {
+        // The next half hour from now.
+        const next = new Date(Math.ceil(Date.now() / 1_800_000) * 1_800_000);
+        setTime(localDay(next.getTime()) === today ? clockOf(next.getTime()) : "23:30");
+      } else {
+        setTime("09:00");
+      }
+      setLength(String(minutes));
+    }
+    setEditing(true);
+  };
+
+  const submit = async () => {
+    const mins = Number(length);
+    const start = new Date(`${day}T${time}:00`).getTime();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^\d{2}:\d{2}$/.test(time) || !Number.isFinite(start) || !(mins > 0)) return;
+    setBusy(true);
+    const ok = await block.onSchedule(start, start + Math.round(mins) * 60_000);
+    setBusy(false);
+    if (ok) setEditing(false);
+  };
+
+  const when = link
+    ? `${new Date(link.start).toLocaleDateString(locale === "en" ? "en-US" : "zh-CN", { month: "numeric", day: "numeric", weekday: "short" })} ${clockOf(link.start)}–${clockOf(link.end)}`
+    : "";
+
+  return (
+    <div className="tempo-property-grid tempo-block-row">
+      <span className="tempo-property-label">{t("blockLabel", locale)}</span>
+      {editing ? (
+        <div className="tempo-block-form">
+          <input type="date" className="tempo-block-input" value={day} onChange={(e) => setDay((e.target as HTMLInputElement).value)} />
+          <input type="time" className="tempo-block-input" value={time} step={300} onChange={(e) => setTime((e.target as HTMLInputElement).value)} />
+          <span className="tempo-block-length">
+            <input
+              type="number"
+              className="tempo-block-input tempo-block-minutes"
+              min={5}
+              step={5}
+              value={length}
+              onChange={(e) => setLength((e.target as HTMLInputElement).value)}
+            />
+            {t("blockMinutes", locale)}
+          </span>
+          <span className="tempo-block-actions">
+            <button type="button" className="tempo-action-btn mod-cta" disabled={busy} onClick={() => void submit()}>
+              {t("blockConfirm", locale)}
+            </button>
+            <button type="button" className="tempo-action-btn" disabled={busy} onClick={() => setEditing(false)}>
+              {t("blockCancel", locale)}
+            </button>
+          </span>
+        </div>
+      ) : link ? (
+        <div className="tempo-reminder-linked tempo-block-linked">
+          <span className="tempo-block-when" title={link.title}>{when}</span>
+          {task.status !== "done" && task.status !== "canceled" && (
+            <button type="button" className="tempo-action-btn" onClick={open}>{t("blockReschedule", locale)}</button>
+          )}
+          <button type="button" className="tempo-action-btn" onClick={block.onUnschedule}>{t("blockRemove", locale)}</button>
+        </div>
+      ) : (
+        <button type="button" className="tempo-action-btn tempo-block-add" onClick={open}>
+          {t("blockSchedule", locale)}
+        </button>
+      )}
+    </div>
+  );
 }
 
 export const FOCUS_STATE_KEYS = {
@@ -169,6 +283,7 @@ export function Inspector({
   onOpenOutcome,
   focus,
   reminder,
+  calendarBlock,
 }: InspectorProps): JSX.Element {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [titleDraft, setTitleDraft] = useState(task.title);
@@ -525,6 +640,16 @@ export function Inspector({
               </button>
             )}
           </div>
+        )}
+
+        {calendarBlock && (calendarBlock.link || (task.status !== "done" && task.status !== "canceled" && !task.parentTaskId)) && (
+          <CalendarBlockRow
+            task={task}
+            block={calendarBlock}
+            minutes={effort.minutes || task.estimateMinutes || 30}
+            locale={locale}
+            onRequestLicense={onRequestLicense}
+          />
         )}
 
         {focus && <FocusSection taskId={task.id} focus={focus} locale={locale} />}

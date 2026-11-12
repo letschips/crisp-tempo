@@ -2753,7 +2753,8 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   white-space: nowrap;
 }
 
-.tempo-reminder-row {
+.tempo-reminder-row,
+.tempo-block-row {
   margin-top: -4px;
 }
 
@@ -2764,7 +2765,8 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   min-width: 0;
 }
 
-.tempo-reminder-list {
+.tempo-reminder-list,
+.tempo-block-when {
   min-width: 0;
   font-size: 13px;
   color: var(--text-normal);
@@ -2773,7 +2775,8 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   white-space: nowrap;
 }
 
-.tempo-reminder-add {
+.tempo-reminder-add,
+.tempo-block-add {
   justify-self: start;
 }
 
@@ -2783,6 +2786,62 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   text-transform: none;
   letter-spacing: 0;
   color: var(--text-warning, #d99a2b);
+}
+
+.tempo-event-row.is-task {
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.tempo-event-row.is-task:hover {
+  background: var(--background-modifier-hover);
+}
+
+.tempo-block-linked {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.tempo-block-linked .tempo-block-when {
+  flex: 1 0 auto;
+  overflow: visible;
+}
+
+.tempo-block-linked .tempo-action-btn,
+.tempo-block-form .tempo-action-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.tempo-block-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tempo-block-input {
+  height: 26px;
+  font-size: 13px;
+  padding: 0 6px;
+}
+
+.tempo-block-minutes {
+  width: 56px;
+}
+
+.tempo-block-length {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.tempo-block-actions {
+  display: inline-flex;
+  gap: 6px;
 }
 
 .tempo-event-row.is-canceled .tempo-event-title {

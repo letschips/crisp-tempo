@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.19.3] - 2026-11-17
+
+### Changed
+- 优化使用体验
+
 ## [0.19.2] - 2026-11-17
 
 ### Changed

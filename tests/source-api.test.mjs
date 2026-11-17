@@ -31,6 +31,7 @@ const entry = path.join(outDir, "entry.ts");
 fs.writeFileSync(entry, [
   `export { default as Tempo } from ${JSON.stringify(path.join(root, "src/main.ts"))};`,
   `export { TempoStore } from ${JSON.stringify(path.join(root, "src/core/store.ts"))};`,
+  `export { applyEntitlement, tempoEntitled } from ${JSON.stringify(path.join(root, "src/services/entitlement.ts"))};`,
 ].join("\n"));
 await esbuild.build({
   entryPoints: [entry], bundle: true, format: "esm", platform: "node", outfile: path.join(outDir, "plugin.mjs"),
@@ -40,7 +41,7 @@ await esbuild.build({
 });
 globalThis.window = Object.assign(globalThis.window ?? {}, { setTimeout, clearTimeout, setInterval, clearInterval, app: { appId: "test-device" } });
 globalThis.document ??= { hidden: false };
-const { Tempo, TempoStore } = await import(pathToFileURL(path.join(outDir, "plugin.mjs")).href);
+const { Tempo, TempoStore, applyEntitlement, tempoEntitled } = await import(pathToFileURL(path.join(outDir, "plugin.mjs")).href);
 
 const SOURCE = "crisp-launchpad:publish-WECHAT-20261111-DEMO";
 async function setup(t) {
@@ -67,13 +68,14 @@ async function setup(t) {
     metadataCache: { getFileCache: () => null, getFirstLinkpathDest: () => null },
     vault: { adapter, configDir: ".obsidian", getAbstractFileByPath: () => null },
   };
-  const start = async () => {
+  const start = async ({ licensed = true } = {}) => {
     const tempo = new Tempo(app, { id: "crisp-tempo", dir: "plugin/tempo", version: "0.17.0" });
     tempo.activateView = async () => null;
     await tempo.onload();
     const store = TempoStore.get(tempo);
     await store.load(true);
-    store.data.licenseStatus = "valid";
+    // The fixture has no signed code; a licensed session is granted through the module gate.
+    if (licensed) applyEntitlement(store, { valid: true });
     return { tempo, store };
   };
   const saved = () => Object.values(JSON.parse(fs.readFileSync(abs(dataPath), "utf8")).database.tasks);
@@ -120,4 +122,16 @@ test("a reschedule reaches the disk, respects a date edited in Tempo across a re
   assert.equal(cleared.status, "updated");
   assert.equal("dueDate" in f.saved()[0], false);
   assert.deepEqual(await tempo.rescheduleSourceTask({ sourceId: "crisp-launchpad:publish-NONE", dueDate: null, ifDueDate: null }), { status: "missing" });
+});
+
+test("writing licenseStatus at runtime does not unlock creation (hardening)", async (t) => {
+  const f = await setup(t);
+  const { tempo, store } = await f.start({ licensed: false });
+  store.data.licenseStatus = "valid";
+  store.data = { ...store.data, licenseStatus: "valid" };
+  assert.equal(tempoEntitled(store), false);
+  await assert.rejects(() => tempo.createTaskFromSource({ sourceId: SOURCE, title: "x", notePath: "a/article.md" }));
+  assert.equal(await tempo.openQuickAddModal(), false);
+  assert.equal((await tempo.getActionOverview()).licensed, false);
+  assert.equal(f.saved().length, 0);
 });

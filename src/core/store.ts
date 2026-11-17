@@ -4,6 +4,7 @@ import { lt, resolveHant, resolveLocale, setActiveLocale, type LanguageSetting, 
 import type { Area, Cycle, Label, Project, Task, TodoDatabase } from "./types";
 import type { LicensePayload, LicenseVerifyResult } from "../services/license";
 import { inheritVaultCrispLicense, verifyLicenseCode } from "../services/license";
+import { applyEntitlement, onEntitlementChange } from "../services/entitlement";
 import { addFocusEntry, cleanFocusLog, type ActiveFocus, type FocusEntry, type FocusLog } from "../services/focus-bridge";
 import { mergeAppleSettings, mergeDatabase, mergeFocusLog, mergeSetting, type MergeConflict } from "./merge";
 import { cleanAppleSettings, type AppleSettings, type CalendarEvent } from "./apple-sync";
@@ -383,6 +384,8 @@ export class TempoStore {
 
   constructor(plugin: Plugin) {
     this.plugin = plugin;
+    // An expiry passing mid-session locks creation again; the UI re-reads the gate on notify.
+    onEntitlementChange(this, () => this.notify());
   }
 
   public subscribe(listener: () => void): () => void {
@@ -595,13 +598,18 @@ export class TempoStore {
         const local = await verifyLicenseCode(cleanData.licenseKey, "crisp-tempo", { online: false });
         cleanData.licenseStatus = local.valid ? "valid" : "invalid";
         if (local.payload) cleanData.licensePayload = local.payload;
+        applyEntitlement(this, local);
       } catch (err) {
         console.debug("Crisp Tempo: local license check failed", err);
         cleanData.licenseStatus = "invalid";
+        applyEntitlement(this, { valid: false });
       }
-    } else if (cleanData.licenseStatus === "valid") {
-      cleanData.licenseStatus = undefined;
-      cleanData.licensePayload = undefined;
+    } else {
+      applyEntitlement(this, { valid: false });
+      if (cleanData.licenseStatus === "valid") {
+        cleanData.licenseStatus = undefined;
+        cleanData.licensePayload = undefined;
+      }
     }
 
     // One recoverable snapshot per day, taken before this session starts writing.
@@ -638,6 +646,7 @@ export class TempoStore {
       if (storedKey) {
         const res = await verifyLicenseCode(storedKey, "crisp-tempo");
         if (!unchanged() || !this.data) return;
+        applyEntitlement(this, res);
         this.data.licenseStatus = res.valid ? "valid" : "invalid";
         if (res.payload) this.data.licensePayload = res.payload;
         this.data.licenseLastVerified = Date.now();
@@ -652,6 +661,7 @@ export class TempoStore {
         exclude: storedKey ? [storedKey] : [],
       });
       if (!inherited || !unchanged() || !this.data) return;
+      applyEntitlement(this, inherited.result);
       this.data = {
         ...this.data,
         licenseKey: inherited.code,
@@ -1144,6 +1154,7 @@ export class TempoStore {
   public async activateLicense(code: string): Promise<LicenseVerifyResult> {
     const res = await verifyLicenseCode(code, "crisp-tempo");
     if (res.valid && this.data) {
+      applyEntitlement(this, res);
       this.data = {
         ...this.data,
         licenseKey: code.trim(),
@@ -1160,6 +1171,7 @@ export class TempoStore {
 
   public async clearLicense(): Promise<void> {
     if (!this.data) return;
+    applyEntitlement(this, { valid: false });
     this.data = {
       ...this.data,
       licenseKey: undefined,

@@ -187,6 +187,7 @@ const close = (page) => page.context().close();
 const grantLicense = (page) => page.evaluate(() => {
   const s = tempoAudit.store.TempoStore.get(plugin);
   s.data = { ...s.data, licenseStatus: 'valid' };
+  tempoAudit.entitlement.applyEntitlement(s, { valid: true });
   s.notify();
 });
 
@@ -1108,6 +1109,23 @@ await scenario('r6_hand_edited_status_does_not_unlock', async () => {
   assert.equal(await p2.evaluate(() => tempoAudit.store.TempoStore.get(plugin).data.licenseStatus), 'invalid');
   await close(p); await close(p2);
   return { noKey: 'unlicensed', forgedKey: 'invalid' };
+});
+
+/* Hardening — the gate lives in a module-private map, so writing licenseStatus from the
+   console (the old unlock) must leave the activation chip and the creation gate in place. */
+await scenario('r6_runtime_status_write_does_not_unlock', async () => {
+  const p = await boot({ adapter: true, adapterRaw: SINGLE_TASK_DB, licensed: false });
+  await p.evaluate(() => {
+    const s = tempoAudit.store.TempoStore.get(plugin);
+    s.data = { ...s.data, licenseStatus: 'valid', licensePayload: { userName: 'x', expiresAt: '2999-01-01' } };
+    s.notify();
+  });
+  await p.waitForTimeout(50);
+  assert.equal(await p.locator('.tempo-license-chip').count(), 1, 'chip stays after a console write');
+  const opened = await p.evaluate(() => tempoAudit.store.TempoStore.get(plugin).data.licenseStatus);
+  assert.equal(opened, 'valid');
+  await close(p);
+  return { chip: true };
 });
 
 await scenario('r6_edit_and_delete_project', async () => {

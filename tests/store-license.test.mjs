@@ -25,6 +25,7 @@ const entry = path.join(outDir, "entry.ts");
 writeFileSync(entry, [
   `export { TempoStore } from ${JSON.stringify(path.join(root, "src/core/store.ts"))};`,
   `export { createEmptyDatabase } from ${JSON.stringify(path.join(root, "src/core/mock-data.ts"))};`,
+  `export { tempoEntitled } from ${JSON.stringify(path.join(root, "src/services/entitlement.ts"))};`,
 ].join("\n"));
 await esbuild.build({
   entryPoints: [entry],
@@ -48,7 +49,7 @@ await esbuild.build({
 });
 // The plugin reads its device id from window.app in Obsidian.
 globalThis.window = { app: { appId: "test-device" } };
-const { TempoStore, createEmptyDatabase } = await import(pathToFileURL(path.join(outDir, "store.mjs")).href);
+const { TempoStore, createEmptyDatabase, tempoEntitled } = await import(pathToFileURL(path.join(outDir, "store.mjs")).href);
 
 const b64url = (buf) => Buffer.from(buf).toString("base64url");
 function makeCode(fields = {}) {
@@ -123,6 +124,7 @@ test("an inherited code is checked online and a revoked one is not inherited", a
   assert.deepEqual(calls, [revoked], "inheritance must reach the licence service");
   assert.equal(store.data.licenseKey, undefined, "a revoked sibling code must not be inherited");
   assert.notEqual(store.data.licenseStatus, "valid");
+  assert.equal(tempoEntitled(store), false);
   await store.flush();
   assert.equal(saved().licenseKey, undefined, "and must not be written to data.json");
 });
@@ -134,6 +136,7 @@ test("an inherited code that passes online unlocks and is saved", async () => {
   await afterCalls(calls, 1);
   assert.equal(store.data.licenseKey, good);
   assert.equal(store.data.licenseStatus, "valid");
+  assert.equal(tempoEntitled(store), true);
   await store.flush();
   assert.equal(saved().licenseKey, good);
 });
@@ -145,6 +148,7 @@ test("inheritance works offline by falling back to the local signature", async (
   await afterCalls(calls, 1);
   assert.equal(store.data.licenseKey, good);
   assert.equal(store.data.licenseStatus, "valid");
+  assert.equal(tempoEntitled(store), true);
 });
 
 test("a rejected first candidate does not block a valid later one", async () => {
@@ -159,6 +163,7 @@ test("a rejected first candidate does not block a valid later one", async () => 
   assert.deepEqual(calls, [revoked, good]);
   assert.equal(store.data.licenseKey, good);
   assert.equal(store.data.licenseStatus, "valid");
+  assert.equal(tempoEntitled(store), true);
 });
 
 test("an expired stored code is replaced by a valid sibling code", async () => {
@@ -173,6 +178,7 @@ test("an expired stored code is replaced by a valid sibling code", async () => {
   assert.deepEqual(calls, [renewed], "the expired code is rejected locally, the sibling online");
   assert.equal(store.data.licenseKey, renewed);
   assert.equal(store.data.licenseStatus, "valid");
+  assert.equal(tempoEntitled(store), true);
   await store.flush();
   assert.equal(saved().licenseKey, renewed);
 });
@@ -190,6 +196,7 @@ test("a stored code revoked online is replaced, and is never retried as a candid
   assert.deepEqual(calls, [revoked, renewed]);
   assert.equal(store.data.licenseKey, renewed);
   assert.equal(store.data.licenseStatus, "valid");
+  assert.equal(tempoEntitled(store), true);
 });
 
 test("a stored code revoked online with no valid replacement stays invalid", async () => {
@@ -199,6 +206,7 @@ test("a stored code revoked online with no valid replacement stays invalid", asy
   await afterCalls(calls, 1);
   assert.equal(store.data.licenseKey, revoked);
   assert.equal(store.data.licenseStatus, "invalid");
+  assert.equal(tempoEntitled(store), false);
 });
 
 test("a stored code that passes online is kept and siblings are not consulted", async () => {
@@ -210,6 +218,7 @@ test("a stored code that passes online is kept and siblings are not consulted", 
   assert.deepEqual(calls, [own]);
   assert.equal(store.data.licenseKey, own);
   assert.equal(store.data.licenseStatus, "valid");
+  assert.equal(tempoEntitled(store), true);
 });
 
 test("after the user deactivates, a sibling code is not inherited", async () => {
@@ -220,6 +229,7 @@ test("after the user deactivates, a sibling code is not inherited", async () => 
   assert.equal(calls.length, 0);
   assert.equal(store.data.licenseKey, undefined);
   assert.equal(store.data.licenseStatus, "unlicensed");
+  assert.equal(tempoEntitled(store), false);
 });
 
 test("deactivating while an inheritance check is in flight wins", async () => {
@@ -240,4 +250,5 @@ test("deactivating while an inheritance check is in flight wins", async () => {
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(store.data.licenseKey, undefined);
   assert.equal(store.data.licenseStatus, "unlicensed");
+  assert.equal(tempoEntitled(store), false);
 });

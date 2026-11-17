@@ -15,6 +15,7 @@ import {
 import { busyMinutes } from "../core/apple-sync";
 import { buildNewTask, type NewTaskInput } from "../core/new-task";
 import { FOCUS_WRAP_UP_HOURS, TempoStore } from "../core/store";
+import { tempoEntitled } from "../services/entitlement";
 import type { Cycle, Project, Task, TaskPriority, TaskStatus, TodoDatabase } from "../core/types";
 import { getTodayString } from "../services/date-service";
 import { t, tf, type LanguageSetting, type Locale } from "../services/i18n";
@@ -45,7 +46,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
   // Crisp Tempo is a paid plugin: creating tasks, subtasks and projects needs a valid
   // license. Everything that touches existing data (view, edit, complete, delete, export)
   // stays available, so an expired license never holds the user's tasks hostage.
-  const hasLicense = () => store.data?.licenseStatus === "valid";
+  const hasLicense = () => tempoEntitled(store);
 
   // Subscribe to central store. A single snapshot shape keeps the initial state and the
   // subscription callback from drifting apart.
@@ -822,7 +823,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
           cycles={db.cycles}
           onSelectNav={(nav) => setActiveNav(nav)}
           onOpenSettings={() => setIsSettingsOpen(true)}
-          isLicensed={storeState.data.licenseStatus === "valid"}
+          isLicensed={tempoEntitled(store)}
           onOpenLicense={() => {
             setLicensePrompt(true);
             setIsSettingsOpen(true);
@@ -992,7 +993,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
               onToggleSubtask={handleToggleStatus}
               onDeleteSubtask={handleDeleteTask}
               onUpdateSubtask={handleUpdateTaskById}
-              canAddSubtask={storeState.data.licenseStatus === "valid"}
+              canAddSubtask={tempoEntitled(store)}
               onRequestLicense={promptForLicense}
               onOpenSource={(notePath) => void plugin.app.workspace.openLinkText(notePath, "", false)}
               reminder={
@@ -1013,7 +1014,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
                 store.appleActions && storeState.data.apple?.calendarEnabled && storeState.apple.calendar === "fullAccess"
                   ? {
                       link: storeState.data.apple.blocks?.[selectedTask.id],
-                      licensed: storeState.data.licenseStatus === "valid",
+                      licensed: tempoEntitled(store),
                       onSchedule: (start, end) => store.appleActions?.scheduleTask(selectedTask.id, start, end) ?? Promise.resolve(false),
                       onUnschedule: () => void store.appleActions?.unscheduleTask(selectedTask.id),
                     }
@@ -1125,7 +1126,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
             onExportData={(folder) => store.exportRawData(folder)}
             exportFolder={storeState.data?.exportFolder}
             licenseKey={storeState.data?.licenseKey}
-            licenseStatus={storeState.data?.licenseStatus}
+            licenseStatus={tempoEntitled(store) ? "valid" : storeState.data?.licenseStatus === "valid" ? "invalid" : storeState.data?.licenseStatus}
             licensePayload={storeState.data?.licensePayload}
             onActivateLicense={(key) => store.activateLicense(key)}
             onClearLicense={() => store.clearLicense()}
@@ -1135,7 +1136,7 @@ export function App({ plugin, leaf }: AppProps): JSX.Element {
                     runtime: storeState.apple,
                     settings: storeState.data.apple ?? {},
                     actions: store.appleActions,
-                    licensed: storeState.data.licenseStatus === "valid",
+                    licensed: tempoEntitled(store),
                     onUpdateSettings: (updater) => store.updateAppleSettings(updater),
                   }
                 : undefined

@@ -1,5 +1,6 @@
 import { Plugin, PluginSettingTab, Setting, Notice, addIcon, setIcon, type App, type WorkspaceLeaf } from "obsidian";
 import { TempoStore } from "./core/store";
+import { tempoEntitled } from "./services/entitlement";
 import { TempoView, TEMPO_VIEW_TYPE } from "./views/TempoView";
 import { detectObsidianHant, detectObsidianLocale, getActiveLocale, lt, t, tf, zhText, type LanguageSetting } from "./services/i18n";
 import { toHant } from "./services/hant";
@@ -140,7 +141,7 @@ export default class CrispTempoPlugin extends Plugin {
     const store = await this.readyStore();
     const data = store.data!;
     const existing = findSourceTask(data.database, input.sourceId);
-    if (!existing && data.licenseStatus !== "valid") throw new Error(lt("新建任务需要先激活 Crisp Tempo", "Activate Crisp Tempo before creating tasks"));
+    if (!existing && !tempoEntitled(store)) throw new Error(lt("新建任务需要先激活 Crisp Tempo", "Activate Crisp Tempo before creating tasks"));
     const now = Date.now();
     const result = upsertSourceTask(data.database, input, {
       dest: data.defaultDest === "today" ? "today" : "inbox",
@@ -186,7 +187,7 @@ export default class CrispTempoPlugin extends Plugin {
    */
   async openQuickAddModal(): Promise<boolean> {
     const store = await this.readyStore();
-    if (store.data!.licenseStatus !== "valid") return false;
+    if (!tempoEntitled(store)) return false;
     this.closeFloatingQuickAdd?.();
     this.closeFloatingQuickAdd = openFloatingQuickAdd(store);
     return true;
@@ -240,7 +241,7 @@ export default class CrispTempoPlugin extends Plugin {
   async getActionOverview(): Promise<{ apiVersion: 1; date: string; licensed: boolean; tasks: ActionSummary[] }> {
     const store = await this.readyStore();
     const data = store.data!;
-    return { apiVersion: 1, licensed: data.licenseStatus === "valid", ...getActionOverview(data.database, getTodayString()) };
+    return { apiVersion: 1, licensed: tempoEntitled(store), ...getActionOverview(data.database, getTodayString()) };
   }
 
   /** Opens Tempo with the task selected. */
@@ -403,7 +404,7 @@ class CrispTempoSettingTab extends PluginSettingTab {
     // 1. Software License & Activation
     containerEl.createEl("h3", { text: t("licenseSettings", locale) });
 
-    const isValid = data?.licenseStatus === "valid";
+    const isValid = tempoEntitled(store);
     const statusSetting = new Setting(containerEl).setName(t("licenseStatus", locale));
 
     if (isValid && data?.licensePayload) {

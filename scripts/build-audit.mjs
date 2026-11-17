@@ -44,6 +44,7 @@ const entryCode = `
 import { h, render } from "preact";
 import { App } from "./src/ui/App";
 import * as store from "./src/core/store";
+import * as entitlement from "./src/services/entitlement";
 import { createInitialMockDatabase } from "./src/core/mock-data";
 import { openFloatingQuickAdd } from "./src/ui/floating-quick-add";
 
@@ -71,6 +72,8 @@ import { openFloatingQuickAdd } from "./src/ui/floating-quick-add";
       return s ? s.popUndo() : null;
     },
   },
+  // Test-only: the production bundle never exposes the gate.
+  entitlement,
   mock: createInitialMockDatabase,
   openFloatingQuickAdd: () => openFloatingQuickAdd(store.TempoStore.get((window as any).plugin)),
 };

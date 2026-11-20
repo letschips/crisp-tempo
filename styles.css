@@ -2653,6 +2653,11 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
   margin-top: 8px;
 }
 
+.tempo-apple-denied > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .tempo-apple-detail {
   margin-top: 10px;
   padding: 10px 12px;

@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.19.5] - 2026-11-25
+
+### Fixed
+- 粘贴激活码时自动去掉多余的空格、换行和前后文字。
+
 ## [0.19.4] - 2026-11-20
 
 ### Fixed

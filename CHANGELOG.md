@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.19.6] - 2026-11-26
+
+### Fixed
+- 窗口较窄时，任务详情下面的列表不再透出来。
+
 ## [0.19.5] - 2026-11-25
 
 ### Fixed

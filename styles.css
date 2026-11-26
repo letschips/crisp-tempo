@@ -2185,6 +2185,13 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
     overflow: hidden !important;
   }
 
+  /* The full-pane inspector keeps the translucent surface, so hide the page under it instead of
+     letting the list show through. Dialogs stay visible. */
+  .tempo-root.has-selected-task .tempo-wrapper > :not(.tempo-workbench):not(.tempo-modal-backdrop),
+  .tempo-root.has-selected-task .tempo-workbench > :not(.tempo-inspector-card) {
+    visibility: hidden !important;
+  }
+
   .tempo-inspector-card {
     position: absolute !important;
     top: 0 !important;
@@ -2228,6 +2235,13 @@ body.is-translucent.theme-dark:not(.is-popout-window):not(.is-popout-modal) .tem
 .is-mobile .tempo-root.has-selected-task,
 .is-phone .tempo-root.has-selected-task {
   overflow: hidden !important;
+}
+
+.is-mobile .tempo-root.has-selected-task .tempo-wrapper > :not(.tempo-workbench):not(.tempo-modal-backdrop),
+.is-mobile .tempo-root.has-selected-task .tempo-workbench > :not(.tempo-inspector-card),
+.is-phone .tempo-root.has-selected-task .tempo-wrapper > :not(.tempo-workbench):not(.tempo-modal-backdrop),
+.is-phone .tempo-root.has-selected-task .tempo-workbench > :not(.tempo-inspector-card) {
+  visibility: hidden !important;
 }
 
 .is-mobile .tempo-sidebar-card,

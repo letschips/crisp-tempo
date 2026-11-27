@@ -2,6 +2,11 @@
 
 All notable changes to **Crisp Tempo** will be documented in this file.
 
+## [0.19.7] - 2026-11-27
+
+### Fixed
+- 修复：Crisp Pulse 停用时继承不到它的授权码。
+
 ## [0.19.6] - 2026-11-26
 
 ### Fixed
